@@ -34,6 +34,9 @@ module eakf_oda_mod
   real, allocatable, dimension(:) :: ens_mean, ens_inc
   real, allocatable, dimension(:) :: enso_temp, obs_inc_eakf_temp, obs_inc_oi_temp
   real, allocatable, dimension(:) :: enso_salt, obs_inc_eakf_salt, obs_inc_oi_salt
+  integer, allocatable, dimension(:) :: lon1d, lat1d
+  integer, allocatable, dimension(:) :: kd_ind
+  real, allocatable, dimension(:) :: kd_dist
 
   public ensemble_filter
 
@@ -42,7 +45,7 @@ contains
   subroutine ensemble_filter(Prior, Posterior, Profiles, kdroot, Domain, oda_grid)
     type(ocean_control_struct), pointer, intent(in) :: Prior
     type(ocean_control_struct), pointer, intent(inout) :: Posterior
-    type(ocean_profile_type), dimension(:), intent(in) :: Profiles
+    type(ocean_profile_type), pointer, intent(in) :: Profiles
     type(kd_root), pointer, intent(inout) :: kdroot
     type(domain2d), intent(in) :: Domain
     type(grid_type), pointer, intent(in) :: oda_grid
@@ -76,12 +79,10 @@ contains
     integer :: ni, nj, nk, ndim
     integer :: stdout_unit
     integer :: ens_size, nprof
+    type(ocean_profile_type), pointer :: Prof
 
     !=======================================================================
-    integer, dimension(:), allocatable :: lon1d, lat1d
     real, dimension(:), allocatable :: glon1d, glat1d
-    integer, dimension(:), allocatable :: kd_ind
-    real, dimension(:), allocatable :: kd_dist
     integer :: kd_num
 
     !=======================================================================
@@ -99,14 +100,13 @@ contains
 
     integer :: ii_ens, jj_ens, kk_ens
     integer :: ind_temp_h, ind_temp_l, ind_salt_h, ind_salt_l
-    integer :: i0, i, j, k, k0, kk, num, blk, i_idx
+    integer :: i, j, k, k0, kk, num, blk, i_idx
     integer :: t_tau, s_tau
     integer :: kk0, kk1, kk2
-    integer :: lji, model_size 
+    integer :: model_size!, lji
     integer :: unit, ierr, io, j_ens, i_h, kk_bot
     integer :: diff_days, diff_seconds
     real :: diff_hours, diff_k
-    integer :: i_o, j_o, k_o
     integer, dimension(20) :: ind_unit
 
     !---------------------------------------------------------------------------
@@ -132,7 +132,8 @@ contains
     if( Prior%ensemble_size .ne. Posterior%ensemble_size ) &
             call error_mesg('eakf_oda_mod::ensemble_filter', 'Ensemble size mismatch in Prior and Posterior', FATAL)
 
-    nprof = size(Profiles)
+    !nprof = size(Profiles)
+    nprof = 0
     ens_size = Prior%ensemble_size
     ndim = size(shape(Prior%T))
     nk = size(Prior%T, ndim-1)
@@ -145,27 +146,10 @@ contains
     call mpp_get_compute_domain(Domain, isc, iec, jsc, jec)
     call mpp_get_data_domain(Domain, isd, ied, jsd, jed)
     call mpp_get_global_domain(Domain, isg, ieg, jsg, jeg)
-    ni = ieg-isg+1; nj = jeg-jsg+1
-    blk = (jed-jsd+1)*(ied-isd+1)
-
-    allocate( lon1d(blk), lat1d(blk) )
-    allocate( glon1d(blk), glat1d(blk) )
-    do i = isd, ied; do j = jsd, jed
-      lon1d((j-jsd)*(ied-isd+1)+i-isd+1) = i
-      lat1d((j-jsd)*(ied-isd+1)+i-isd+1) = j
-      glon1d((j-jsd)*(ied-isd+1)+i-isd+1) = oda_grid%x(i,j)
-      glat1d((j-jsd)*(ied-isd+1)+i-isd+1) = oda_grid%y(i,j)
-    enddo; enddo
     halox = isc - isd
     haloy = jsc - jsd
-
-    if ( .not. associated(kdroot) ) then
-      allocate(kdroot)
-      call kd_init(kdroot, glon1d, glat1d)
-    endif
-
-    allocate( kd_ind(blk) )
-    allocate( kd_dist(blk) )
+    ni = ieg-isg+1; nj = jeg-jsg+1
+    blk = (jed-jsd+1)*(ied-isd+1)
 
     ! Read namelist for run time control
     unit = open_namelist_file()
@@ -180,11 +164,26 @@ contains
     end if
 
     ! Write the namelist to a log file
-    call write_version_number(vers_num, module_name)
+    call write_version_number(vers_num, module_name, blk)
 
     model_size = blk * nk * 2
     if ( .not.module_initialized ) then
-       call eakf_oda_init(model_size, ens_size)
+       call eakf_oda_init(model_size, ens_size, blk)
+    
+       allocate( glon1d(blk), glat1d(blk) )
+       do i = isd, ied; do j = jsd, jed
+         lon1d((j-jsd)*(ied-isd+1)+i-isd+1) = i
+         lat1d((j-jsd)*(ied-isd+1)+i-isd+1) = j
+         glon1d((j-jsd)*(ied-isd+1)+i-isd+1) = oda_grid%x(i,j)
+         glat1d((j-jsd)*(ied-isd+1)+i-isd+1) = oda_grid%y(i,j)
+       enddo; enddo
+
+       if ( .not. associated(kdroot) ) then
+         allocate(kdroot)
+         call kd_init(kdroot, glon1d, glat1d)
+       endif
+
+       deallocate( glon1d, glat1d )
     end if
 
     ! Initialize assim tools module
@@ -197,7 +196,7 @@ contains
        write (stdout_unit, *) 'temp obs standard derivation is ', sigma_o_t
        write (stdout_unit, *) 'salt obs standard derivation is ', sigma_o_s
        write (stdout_unit, *) 'impact_levels is ', impact_levels
-       write (stdout_unit, *) 'no of prfs is ', nprof
+       !write (stdout_unit, *) 'no of prfs is ', nprof
        write (stdout_unit, *) 'depth_cut is', depth_cut
        write (stdout_unit, *) 'e_flder_oer is', e_flder_oer
        write (stdout_unit, *) 'temp(salt)_to_salt(temp) is', temp_to_salt, salt_to_temp
@@ -227,19 +226,22 @@ contains
     call mpp_sync_self()
 
     if ( debug_eakf ) then
-       write (UNIT=stdout_unit, FMT='("PE ",I5,": start lji loop")') pe()
+       write (UNIT=stdout_unit, FMT='("PE ",I5,": start profile loop")') pe()
     end if
 
-    doloop_9: do lji=1, nprof ! (9)
-       k0 = Profiles(lji)%levels
+    Prof => Profiles
+    !doloop_9: do lji=1, nprof ! (9)
+    doloop_9: do while (associated(Prof)) ! (9)
+       nprof = nprof + 1
+       k0 = Prof%levels
 
-       call get_time(Profiles(lji)%tdiff, diff_seconds, diff_days)
+       call get_time(Prof%tdiff, diff_seconds, diff_days)
        diff_hours = diff_seconds/3600 + diff_days * 24
        cov_factor_t = comp_cov_factor(diff_hours, update_window)
 
        if ( cov_factor_t > 0.0 ) then ! control 10d time window (5+ and 5-)
-          obs_loc%lon = Profiles(lji)%lon
-          obs_loc%lat = Profiles(lji)%lat
+          obs_loc%lon = Prof%lon
+          obs_loc%lat = Prof%lat
 
           call kd_search_radius(kdroot, obs_loc%lon, obs_loc%lat, &
                   2*temp_dist*cos(obs_loc%lat*DEG_TO_RAD), &
@@ -272,18 +274,18 @@ contains
                 assim_flag = .false.
                 
                 model_basin = oda_grid%basin_mask(ii_ens, jj_ens)
-                if(Profiles(lji)%basin_mask .eq. 1) then ! Southern ocean
+                if(Prof%basin_mask .eq. 1) then ! Southern ocean
                    if(model_basin == 1 .or. model_basin == 2 .or. &
                            model_basin == 3 .or. model_basin == 5) assim_flag = .true.
-                elseif(Profiles(lji)%basin_mask .eq. 2) then ! Atlantic
+                elseif(Prof%basin_mask .eq. 2) then ! Atlantic
                    if(model_basin == 2 .or. model_basin == 1 .or. model_basin == 4) assim_flag = .true.
-                elseif(Profiles(lji)%basin_mask .eq. 3) then ! Pacific
+                elseif(Prof%basin_mask .eq. 3) then ! Pacific
                    if(model_basin == 3 .or. model_basin == 1) assim_flag = .true.
-                elseif(Profiles(lji)%basin_mask .eq. 4) then ! Arctic
+                elseif(Prof%basin_mask .eq. 4) then ! Arctic
                    if(model_basin == 4 .or. model_basin == 2) assim_flag = .true.
-                elseif(Profiles(lji)%basin_mask .eq. 5) then ! Indian
+                elseif(Prof%basin_mask .eq. 5) then ! Indian
                    if(model_basin == 5 .or. model_basin == 1) assim_flag = .true.
-                elseif(Profiles(lji)%basin_mask .eq. 6) then ! Mediterranean
+                elseif(Prof%basin_mask .eq. 6) then ! Mediterranean
                    if(model_basin == 6) assim_flag = .true.
                 end if
 
@@ -292,74 +294,57 @@ contains
                    cov_factor = cov_factor_t
 
                    ifblock_5: if ( cov_factor > 0.0 ) then ! (5)
-                      ifblock_4_4: if ( Profiles(lji)%variable == TEMP_ID .or. &
-                           & Profiles(lji)%variable == SALT_ID ) then ! T,S -> T,S (4.4)
-                         kk_bot = Profiles(lji)%k_index(k0)
-                         depth_bot = Profiles(lji)%depth(k0)
+                      ifblock_4_4: if ( Prof%variable == TEMP_ID .or. &
+                           & Prof%variable == SALT_ID ) then ! T,S -> T,S (4.4)
+                         kk_bot = Prof%k_index(k0)
+                         depth_bot = Prof%depth(k0)
                          doloop_4: do kk = 1, k0 ! (4)
-                            if ( Profiles(lji)%flag(kk) .and. &
-                                    Profiles(lji)%depth(kk) <= depth_cut) then ! add each level flag
+                            if ( Prof%flag(kk) .and. &
+                                    Prof%depth(kk) <= depth_cut) then ! add each level flag
                                do j_ens=1, ens_size
                                   v2_h = 0.0
                                   v2_l = 0.0
-                                  if ( Profiles(lji)%variable == TEMP_ID ) then
+                                  if ( Prof%variable == TEMP_ID ) then
                                      do i_idx=1, 4
-                                        ind_temp_h = Profiles(lji)%obs_def(kk)%state_var_index(i_idx)
-                                        ind_temp_l = Profiles(lji)%obs_def(kk)%state_var_index(i_idx+4)
-                                        v2_h = v2_h + ens(ind_temp_h, j_ens)*Profiles(lji)%obs_def(kk)%coef(i_idx)
-                                        v2_l = v2_l + ens(ind_temp_l, j_ens)*Profiles(lji)%obs_def(kk)%coef(i_idx)
+                                        ind_temp_h = Prof%obs_def(kk)%state_var_index(i_idx)
+                                        ind_temp_l = Prof%obs_def(kk)%state_var_index(i_idx+4)
+                                        v2_h = v2_h + ens(ind_temp_h, j_ens)*Prof%obs_def(kk)%coef(i_idx)
+                                        v2_l = v2_l + ens(ind_temp_l, j_ens)*Prof%obs_def(kk)%coef(i_idx)
                                      end do
-                                     enso_temp(j_ens) = v2_h*Profiles(lji)%obs_def(kk)%coef(5) &
-                                             + v2_l*Profiles(lji)%obs_def(kk)%coef(6)
+                                     enso_temp(j_ens) = v2_h*Prof%obs_def(kk)%coef(5) &
+                                             + v2_l*Prof%obs_def(kk)%coef(6)
                                   end if
                                   v2_h = 0.0
                                   v2_l = 0.0
-                                  if ( Profiles(lji)%variable == SALT_ID ) then
+                                  if ( Prof%variable == SALT_ID ) then
                                      do i_idx=1, 4
-                                        ind_salt_h = Profiles(lji)%obs_def(kk)%state_var_index(i_idx)+nk*blk
-                                        ind_salt_l = Profiles(lji)%obs_def(kk)%state_var_index(i_idx+4)+nk*blk
-                                        v2_h = v2_h + ens(ind_salt_h, j_ens)*Profiles(lji)%obs_def(kk)%coef(i_idx)
-                                        v2_l = v2_l + ens(ind_salt_l, j_ens)*Profiles(lji)%obs_def(kk)%coef(i_idx)
+                                        ind_salt_h = Prof%obs_def(kk)%state_var_index(i_idx)+nk*blk
+                                        ind_salt_l = Prof%obs_def(kk)%state_var_index(i_idx+4)+nk*blk
+                                        v2_h = v2_h + ens(ind_salt_h, j_ens)*Prof%obs_def(kk)%coef(i_idx)
+                                        v2_l = v2_l + ens(ind_salt_l, j_ens)*Prof%obs_def(kk)%coef(i_idx)
                                      end do
-                                     enso_salt(j_ens) = v2_h*Profiles(lji)%obs_def(kk)%coef(5) &
-                                             + v2_l*Profiles(lji)%obs_def(kk)%coef(6)
+                                     enso_salt(j_ens) = v2_h*Prof%obs_def(kk)%coef(5) &
+                                             + v2_l*Prof%obs_def(kk)%coef(6)
                                   end if
-                                  v2_h = 0.0
                                end do
 
-                               if ( Profiles(lji)%variable == TEMP_ID ) then
-                                  obs_sigma_t = sigma_o_t*exp(-Profiles(lji)%depth(kk)/e_flder_oer)
-                                  i_o=Profiles(lji)%i_index
-                                  j_o=Profiles(lji)%j_index
-                                  k_o=Profiles(lji)%k_index(kk)
-                                  if ( k_o < 1 ) k_o = 1
-                                  if ( i_o < 1 ) i_o = 1
-                                  if ( i_o > ni ) i_o = ni
-                                  if ( j_o < 1 ) j_o = 1
-                                  if ( j_o > nj ) j_o = nj
-                                  obs_value = Profiles(lji)%data(kk)
+                               if ( Prof%variable == TEMP_ID ) then
+                                  obs_sigma_t = sigma_o_t*exp(-Prof%depth(kk)/e_flder_oer)
+                                  obs_value = Prof%data(kk)
                                   obs_var_t = obs_sigma_t * obs_sigma_t
                                   call obs_increment_prf_eta_hyb(enso_temp, ens_size, obs_value, obs_var_t,&
                                        & obs_inc_eakf_temp, obs_var_t_oi, obs_inc_oi_temp, std_bg)
                                end if
 
-                               if ( Profiles(lji)%variable == SALT_ID ) then
-                                  obs_sigma_s = sigma_o_s*exp(-Profiles(lji)%depth(kk)/e_flder_oer)
-                                  i_o=Profiles(lji)%i_index; j_o=Profiles(lji)%j_index
-                                  k_o=Profiles(lji)%k_index(kk)
-                                  if ( k_o < 1 ) k_o = 1
-                                  if ( i_o < 1 ) i_o = 1
-                                  if ( i_o > ni ) i_o = ni
-                                  if ( j_o < 1 ) j_o = 1
-                                  if ( j_o > nj ) j_o = nj
-                                  obs_value = Profiles(lji)%data(kk)
+                               if ( Prof%variable == SALT_ID ) then
+                                  obs_sigma_s = sigma_o_s*exp(-Prof%depth(kk)/e_flder_oer)
+                                  obs_value = Prof%data(kk)
                                   obs_var_s = obs_sigma_s * obs_sigma_s
                                   call obs_increment_prf_eta_hyb(enso_salt, ens_size, obs_value, obs_var_s,&
                                        & obs_inc_eakf_salt, obs_var_s_oi, obs_inc_oi_salt, std_bg)
                                end if
 
-                               kk0 = Profiles(lji)%k_index(kk)
-
+                               kk0 = Prof%k_index(kk)
                                kk1 = kk0 - 2 * impact_levels +1
                                kk2 = kk0 + 2 * impact_levels
                                if(kk1 < 1) kk1 = 1
@@ -378,7 +363,7 @@ contains
 
                                   ifblock_2: if ( ens_mean(t_tau) /= 0.0 ) then ! (2) using ens_mean(t_tau) as mask
                                      ifblock_1: if ( cov_factor > 0.0 ) then ! (1)
-                                        ifblock_0_60: if ( Profiles(lji)%variable == TEMP_ID ) then ! (0.60)
+                                        ifblock_0_60: if ( Prof%variable == TEMP_ID ) then ! (0.60)
                                            ! using temperature adjusts temperature and salinity
                                            ! temperature itself
                                            if ( abs(obs_loc%lat) < 80.0 ) then
@@ -451,7 +436,7 @@ contains
                                            end if ifblock_0_50 ! impact salinity or not (0.5)
                                         end if ifblock_0_60 ! finish processing temperature profiles (0.60)
 
-                                        ifblock_0_61: if ( Profiles(lji)%variable == SALT_ID ) then ! (0.61)
+                                        ifblock_0_61: if ( Prof%variable == SALT_ID ) then ! (0.61)
 
                                            if ( abs(obs_loc%lat) < 80.0 ) then
                                               dist0 = salt_dist*cos(obs_loc%lat*DEG_TO_RAD)
@@ -531,6 +516,7 @@ contains
              end if ! get rid of obs crossing the basin bound (optional) (7)
           end do doloop_8 ! finish the adjustments for all related model columns (8)
        end if ! control 10d time window (5+ & 5-)
+       Prof => Prof%cnext
     end do doloop_9 ! finish all profiles (9)
 
     !===== Eakf assim finish =====================================
@@ -553,8 +539,8 @@ contains
 
 
   ! Initialize arrays and other module variables
-  subroutine eakf_oda_init(MODEL_SIZE, ENS_SIZE)
-    integer, intent(in) :: MODEL_SIZE, ENS_SIZE
+  subroutine eakf_oda_init(model_size, ens_size, blk)
+    integer, intent(in) :: model_size, ens_size, blk
 
     integer :: istat, j_ens
 
@@ -563,69 +549,72 @@ contains
     if ( module_initialized ) then
        call error_mesg('eakf_oda_mod::eakf_oda_init', 'Module already initialized.', WARNING)
     else
-       allocate(ens(MODEL_SIZE, ENS_SIZE), STAT=istat)
+       allocate(ens(model_size, ens_size), STAT=istat)
        if ( istat .ne. 0 ) then
-          write (UNIT=emsg_local, FMT='(A,"(",I5,",",I5,")")') 'ens', MODEL_SIZE, ENS_SIZE
+          write (UNIT=emsg_local, FMT='(A,"(",I5,",",I5,")")') 'ens', model_size, ens_size
           call error_mesg('eakf_oda_mod::eakf_oda_init', 'Cannot allocate memory for array '//trim(emsg_local), FATAL)
        end if
        ens = 0.0
 
-       allocate(ens_mean(MODEL_SIZE), STAT=istat)
+       allocate(ens_mean(model_size), STAT=istat)
        if ( istat .ne. 0 ) then
-          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'ens_mean', MODEL_SIZE
+          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'ens_mean', model_size
           call error_mesg('eakf_oda_mod::eakf_oda_init', 'Cannot allocate memory for array '//trim(emsg_local), FATAL)
        end if
        ens_mean = 0.0
 
-       allocate(enso_temp(ENS_SIZE), STAT=istat)
+       allocate(enso_temp(ens_size), STAT=istat)
        if ( istat .ne. 0 ) then
-          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'enso_temp', ENS_SIZE
+          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'enso_temp', ens_size
           call error_mesg('eakf_oda_mod::eakf_oda_init', 'Cannot allocate memory for array '//trim(emsg_local), FATAL)
        end if
        enso_temp = 0.0
 
-       allocate(obs_inc_eakf_temp(ENS_SIZE), STAT=istat)
+       allocate(obs_inc_eakf_temp(ens_size), STAT=istat)
        if ( istat .ne. 0 ) then
-          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'obs_inc_eakf_temp', ENS_SIZE
+          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'obs_inc_eakf_temp', ens_size
           call error_mesg('eakf_oda_mod::eakf_oda_init', 'Cannot allocate memory for array '//trim(emsg_local), FATAL)
        end if
        obs_inc_eakf_temp= 0.0
 
-       allocate(obs_inc_oi_temp(ENS_SIZE), STAT=istat)
+       allocate(obs_inc_oi_temp(ens_size), STAT=istat)
        if ( istat .ne. 0 ) then
-          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'obs_inc_oi_temp', ENS_SIZE
+          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'obs_inc_oi_temp', ens_size
           call error_mesg('eakf_oda_mod::eakf_oda_init', 'Cannot allocate memory for array '//trim(emsg_local), FATAL)
        end if
        obs_inc_oi_temp = 0.0
 
-       allocate(ens_inc(ENS_SIZE), STAT=istat)
+       allocate(ens_inc(ens_size), STAT=istat)
        if ( istat .ne. 0 ) then
-          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'ens_inc', ENS_SIZE
+          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'ens_inc', ens_size
           call error_mesg('eakf_oda_mod::eakf_oda_init', 'Cannot allocate memory for array '//trim(emsg_local), FATAL)
        end if
        ens_inc = 0.0
 
-       allocate(enso_salt(ENS_SIZE), STAT=istat)
+       allocate(enso_salt(ens_size), STAT=istat)
        if ( istat .ne. 0 ) then
-          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'enso_salt', ENS_SIZE
+          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'enso_salt', ens_size
           call error_mesg('eakf_oda_mod::eakf_oda_init', 'Cannot allocate memory for array '//trim(emsg_local), FATAL)
        end if
        enso_salt = 0.0
 
-       allocate(obs_inc_eakf_salt(ENS_SIZE), STAT=istat)
+       allocate(obs_inc_eakf_salt(ens_size), STAT=istat)
        if ( istat .ne. 0 ) then
-          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'obs_inc_eakf_salt', ENS_SIZE
+          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'obs_inc_eakf_salt', ens_size
           call error_mesg('eakf_oda_mod::eakf_oda_init', 'Cannot allocate memory for array '//trim(emsg_local), FATAL)
        end if
        obs_inc_eakf_salt = 0.0
 
-       allocate(obs_inc_oi_salt(ENS_SIZE), STAT=istat)
+       allocate(obs_inc_oi_salt(ens_size), STAT=istat)
        if ( istat .ne. 0 ) then
-          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'obs_inc_oi_salt', ENS_SIZE
+          write (UNIT=emsg_local, FMT='(A,"(",I5,")")') 'obs_inc_oi_salt', ens_size
           call error_mesg('eakf_oda_mod::eakf_oda_init', 'Cannot allocate memory for array '//trim(emsg_local), FATAL)
        end if
        obs_inc_oi_salt = 0.0
 
+       allocate( lon1d(blk), lat1d(blk) )
+       allocate( kd_ind(blk) )
+       allocate( kd_dist(blk) )
     end if
 
     module_initialized = .true.

@@ -17,7 +17,8 @@ module eakf_oda_mod
   use MOM_grid, only : ocean_grid_type
 
   ! ODA Modules
-  use oda_types_mod, only : ocean_profile_type, TEMP_ID, SALT_ID, ocean_control_struct, grid_type
+  use oda_types_mod, only : ocean_profile_type, TEMP_ID, SALT_ID, missing_value
+  use oda_types_mod, only : ocean_control_struct, grid_type
   use kdtree, only : kd_root, kd_search_radius, kd_init
 
   ! EAKF modules
@@ -228,6 +229,39 @@ contains
     if ( debug_eakf ) then
        write (UNIT=stdout_unit, FMT='("PE ",I5,": start profile loop")') pe()
     end if
+
+    Prof => Profiles
+    do while (associated(Prof))
+       k0 = Prof%levels
+       if(.not. associated(Prof%forecast)) allocate(Prof%forecast(k0))
+       Prof%forecast = missing_value
+       do kk = 1, k0
+          if ( Prof%flag(kk) ) then ! add each level flag
+             v2_h = 0.0
+             v2_l = 0.0
+             if ( Prof%variable == TEMP_ID ) then
+                do i_idx=1, 4
+                   ind_temp_h = Prof%obs_def(kk)%state_var_index(i_idx)
+                   ind_temp_l = Prof%obs_def(kk)%state_var_index(i_idx+4)
+                   v2_h = v2_h + ens_mean(ind_temp_h)*Prof%obs_def(kk)%coef(i_idx)
+                   v2_l = v2_l + ens_mean(ind_temp_l)*Prof%obs_def(kk)%coef(i_idx)
+                end do
+                Prof%forecast(kk) = v2_h*Prof%obs_def(kk)%coef(5) &
+                        + v2_l*Prof%obs_def(kk)%coef(6)
+             elseif ( Prof%variable == SALT_ID ) then
+                do i_idx=1, 4
+                   ind_salt_h = Prof%obs_def(kk)%state_var_index(i_idx)+nk*blk
+                   ind_salt_l = Prof%obs_def(kk)%state_var_index(i_idx+4)+nk*blk
+                   v2_h = v2_h + ens_mean(ind_salt_h)*Prof%obs_def(kk)%coef(i_idx)
+                   v2_l = v2_l + ens_mean(ind_salt_l)*Prof%obs_def(kk)%coef(i_idx)
+                end do
+                Prof%forecast(kk) = v2_h*Prof%obs_def(kk)%coef(5) &
+                        + v2_l*Prof%obs_def(kk)%coef(6)
+             end if
+         end if
+       end do
+       Prof => Prof%cnext
+    end do
 
     Prof => Profiles
     !doloop_9: do lji=1, nprof ! (9)
@@ -527,6 +561,39 @@ contains
     ! in the local-domain.
     call mpp_sync_self()
     call red_ens(Posterior%T, Posterior%S, isd, ied, jsd, jed, halox, haloy, nk, ens)
+
+    Prof => Profiles
+    do while (associated(Prof))
+       k0 = Prof%levels
+       if(.not. associated(Prof%analysis)) allocate(Prof%analysis(k0))
+       Prof%analysis = missing_value
+       do kk = 1, k0
+          if ( Prof%flag(kk) ) then ! add each level flag
+             v2_h = 0.0
+             v2_l = 0.0
+             if ( Prof%variable == TEMP_ID ) then
+                do i_idx=1, 4
+                   ind_temp_h = Prof%obs_def(kk)%state_var_index(i_idx)
+                   ind_temp_l = Prof%obs_def(kk)%state_var_index(i_idx+4)
+                   v2_h = v2_h + ens_mean(ind_temp_h)*Prof%obs_def(kk)%coef(i_idx)
+                   v2_l = v2_l + ens_mean(ind_temp_l)*Prof%obs_def(kk)%coef(i_idx)
+                end do
+                Prof%analysis(kk) = v2_h*Prof%obs_def(kk)%coef(5) &
+                        + v2_l*Prof%obs_def(kk)%coef(6)
+             elseif ( Prof%variable == SALT_ID ) then
+                do i_idx=1, 4
+                   ind_salt_h = Prof%obs_def(kk)%state_var_index(i_idx)+nk*blk
+                   ind_salt_l = Prof%obs_def(kk)%state_var_index(i_idx+4)+nk*blk
+                   v2_h = v2_h + ens_mean(ind_salt_h)*Prof%obs_def(kk)%coef(i_idx)
+                   v2_l = v2_l + ens_mean(ind_salt_l)*Prof%obs_def(kk)%coef(i_idx)
+                end do
+                Prof%analysis(kk) = v2_h*Prof%obs_def(kk)%coef(5) &
+                        + v2_l*Prof%obs_def(kk)%coef(6)
+             end if
+         end if
+       end do
+       Prof => Prof%cnext
+    end do
 
     if ( debug_eakf ) then
        write (UNIT=stdout_unit, FMT='("PE ",I5,": finished red_ens")') pe()

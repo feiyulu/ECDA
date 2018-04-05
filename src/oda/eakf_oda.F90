@@ -14,7 +14,6 @@ module eakf_oda_mod
   use time_manager_mod, only : time_type, get_time
   use constants_mod, only : DEG_TO_RAD, RADIUS
   use mpp_domains_mod, only : domain2d, mpp_get_data_domain, mpp_get_compute_domain, mpp_get_global_domain
-  use MOM_grid, only : ocean_grid_type
 
   ! ODA Modules
   use oda_types_mod, only : ocean_profile_type, TEMP_ID, SALT_ID, missing_value

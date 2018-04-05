@@ -79,7 +79,7 @@ contains
     integer :: flag_hyb = 1 ! 0 for hyb scheme, 1 for eakf
     integer :: ni, nj, nk, ndim
     integer :: stdout_unit
-    integer :: ens_size, nprof
+    integer :: ens_size
     type(ocean_profile_type), pointer :: Prof
 
     !=======================================================================
@@ -95,13 +95,13 @@ contains
     real :: cor_oi = 0.0
     real :: cov_factor, cov_factor_v, cov_factor_t, cov_factor_h
 
-    logical :: assim_flag
+    logical :: assim_flag, interp_flag
     integer :: model_basin
     type(loc_type) :: model_loc, obs_loc
 
     integer :: ii_ens, jj_ens, kk_ens
     integer :: ind_temp_h, ind_temp_l, ind_salt_h, ind_salt_l
-    integer :: i, j, k, k0, kk, num, blk, i_idx
+    integer :: i, j, k, k0, kk, num, blk, i_idx, salt_offset
     integer :: t_tau, s_tau
     integer :: kk0, kk1, kk2
     integer :: model_size!, lji
@@ -133,8 +133,6 @@ contains
     if( Prior%ensemble_size .ne. Posterior%ensemble_size ) &
             call error_mesg('eakf_oda_mod::ensemble_filter', 'Ensemble size mismatch in Prior and Posterior', FATAL)
 
-    !nprof = size(Profiles)
-    nprof = 0
     ens_size = Prior%ensemble_size
     ndim = size(shape(Prior%T))
     nk = size(Prior%T, ndim-1)
@@ -151,6 +149,7 @@ contains
     haloy = jsc - jsd
     ni = ieg-isg+1; nj = jeg-jsg+1
     blk = (jed-jsd+1)*(ied-isd+1)
+    salt_offset = nk*blk
 
     ! Read namelist for run time control
     unit = open_namelist_file()
@@ -197,7 +196,6 @@ contains
        write (stdout_unit, *) 'temp obs standard derivation is ', sigma_o_t
        write (stdout_unit, *) 'salt obs standard derivation is ', sigma_o_s
        write (stdout_unit, *) 'impact_levels is ', impact_levels
-       !write (stdout_unit, *) 'no of prfs is ', nprof
        write (stdout_unit, *) 'depth_cut is', depth_cut
        write (stdout_unit, *) 'e_flder_oer is', e_flder_oer
        write (stdout_unit, *) 'temp(salt)_to_salt(temp) is', temp_to_salt, salt_to_temp
@@ -234,9 +232,10 @@ contains
     do while (associated(Prof))
        k0 = Prof%levels
        if(.not. associated(Prof%forecast)) allocate(Prof%forecast(k0))
-       Prof%forecast = missing_value
        do kk = 1, k0
+          Prof%forecast(kk) = missing_value
           if ( Prof%flag(kk) ) then ! add each level flag
+             interp_flag = .true.
              v2_h = 0.0
              v2_l = 0.0
              if ( Prof%variable == TEMP_ID ) then
@@ -245,28 +244,31 @@ contains
                    ind_temp_l = Prof%obs_def(kk)%state_var_index(i_idx+4)
                    v2_h = v2_h + ens_mean(ind_temp_h)*Prof%obs_def(kk)%coef(i_idx)
                    v2_l = v2_l + ens_mean(ind_temp_l)*Prof%obs_def(kk)%coef(i_idx)
+                   if(ens_mean(ind_temp_h) .eq. 0.0 .or. ens_mean(ind_temp_l) .eq. 0.0) &
+                           interp_flag = .false.
                 end do
-                Prof%forecast(kk) = v2_h*Prof%obs_def(kk)%coef(5) &
-                        + v2_l*Prof%obs_def(kk)%coef(6)
              elseif ( Prof%variable == SALT_ID ) then
                 do i_idx=1, 4
-                   ind_salt_h = Prof%obs_def(kk)%state_var_index(i_idx)+nk*blk
-                   ind_salt_l = Prof%obs_def(kk)%state_var_index(i_idx+4)+nk*blk
+                   ind_salt_h = Prof%obs_def(kk)%state_var_index(i_idx)+salt_offset
+                   ind_salt_l = Prof%obs_def(kk)%state_var_index(i_idx+4)+salt_offset
                    v2_h = v2_h + ens_mean(ind_salt_h)*Prof%obs_def(kk)%coef(i_idx)
                    v2_l = v2_l + ens_mean(ind_salt_l)*Prof%obs_def(kk)%coef(i_idx)
+                   if(ens_mean(ind_salt_h) .eq. 0.0 .or. ens_mean(ind_salt_l) .eq. 0.0) &
+                           interp_flag = .false.
                 end do
-                Prof%forecast(kk) = v2_h*Prof%obs_def(kk)%coef(5) &
-                        + v2_l*Prof%obs_def(kk)%coef(6)
              end if
+             if(interp_flag) then
+                Prof%forecast(kk) = v2_h*Prof%obs_def(kk)%coef(5) + v2_l*Prof%obs_def(kk)%coef(6)
+             else
+                     Prof%flag(kk) = .false.
+             endif
          end if
        end do
        Prof => Prof%cnext
     end do
 
     Prof => Profiles
-    !doloop_9: do lji=1, nprof ! (9)
     doloop_9: do while (associated(Prof)) ! (9)
-       nprof = nprof + 1
        k0 = Prof%levels
 
        call get_time(Prof%tdiff, diff_seconds, diff_days)
@@ -352,8 +354,8 @@ contains
                                   v2_l = 0.0
                                   if ( Prof%variable == SALT_ID ) then
                                      do i_idx=1, 4
-                                        ind_salt_h = Prof%obs_def(kk)%state_var_index(i_idx)+nk*blk
-                                        ind_salt_l = Prof%obs_def(kk)%state_var_index(i_idx+4)+nk*blk
+                                        ind_salt_h = Prof%obs_def(kk)%state_var_index(i_idx)+salt_offset
+                                        ind_salt_l = Prof%obs_def(kk)%state_var_index(i_idx+4)+salt_offset
                                         v2_h = v2_h + ens(ind_salt_h, j_ens)*Prof%obs_def(kk)%coef(i_idx)
                                         v2_l = v2_l + ens(ind_salt_l, j_ens)*Prof%obs_def(kk)%coef(i_idx)
                                      end do
@@ -386,7 +388,7 @@ contains
 
                                doloop_3: do kk_ens=kk1, kk2 ! (3)
                                   t_tau   = (kk_ens-1)*blk + i_h
-                                  s_tau   = nk*blk + t_tau
+                                  s_tau   = salt_offset + t_tau
                                   if ( kk_ens <= kk0 ) then
                                     diff_k = kk0 - kk_ens + 1
                                   else
@@ -562,12 +564,13 @@ contains
     call mpp_sync_self()
     call red_ens(Posterior%T, Posterior%S, isd, ied, jsd, jed, halox, haloy, nk, ens)
 
+    ens_mean = sum(ens, dim=2) / ens_size
     Prof => Profiles
     do while (associated(Prof))
        k0 = Prof%levels
        if(.not. associated(Prof%analysis)) allocate(Prof%analysis(k0))
-       Prof%analysis = missing_value
        do kk = 1, k0
+          Prof%analysis(kk) = missing_value
           if ( Prof%flag(kk) ) then ! add each level flag
              v2_h = 0.0
              v2_l = 0.0
@@ -578,18 +581,15 @@ contains
                    v2_h = v2_h + ens_mean(ind_temp_h)*Prof%obs_def(kk)%coef(i_idx)
                    v2_l = v2_l + ens_mean(ind_temp_l)*Prof%obs_def(kk)%coef(i_idx)
                 end do
-                Prof%analysis(kk) = v2_h*Prof%obs_def(kk)%coef(5) &
-                        + v2_l*Prof%obs_def(kk)%coef(6)
              elseif ( Prof%variable == SALT_ID ) then
                 do i_idx=1, 4
-                   ind_salt_h = Prof%obs_def(kk)%state_var_index(i_idx)+nk*blk
-                   ind_salt_l = Prof%obs_def(kk)%state_var_index(i_idx+4)+nk*blk
+                   ind_salt_h = Prof%obs_def(kk)%state_var_index(i_idx)+salt_offset
+                   ind_salt_l = Prof%obs_def(kk)%state_var_index(i_idx+4)+salt_offset
                    v2_h = v2_h + ens_mean(ind_salt_h)*Prof%obs_def(kk)%coef(i_idx)
                    v2_l = v2_l + ens_mean(ind_salt_l)*Prof%obs_def(kk)%coef(i_idx)
                 end do
-                Prof%analysis(kk) = v2_h*Prof%obs_def(kk)%coef(5) &
-                        + v2_l*Prof%obs_def(kk)%coef(6)
              end if
+             Prof%analysis(kk) = v2_h*Prof%obs_def(kk)%coef(5) + v2_l*Prof%obs_def(kk)%coef(6)
          end if
        end do
        Prof => Prof%cnext

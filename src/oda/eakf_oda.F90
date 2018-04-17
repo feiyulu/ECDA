@@ -6,10 +6,9 @@ module eakf_oda_mod
   ! Communications are broadcasting the information at the observation location.
 
   ! FMS shared modules
-  use fms_mod, only : open_namelist_file, file_exist, check_nml_error, write_version_number, close_file
+  use fms_mod, only : open_namelist_file, check_nml_error, close_file
   use fms_mod, only : stdout, error_mesg, FATAL, WARNING
-  use fms_io_mod, only: open_file
-  use mpp_mod, only : mpp_sync_self, mpp_set_stack_size, pe=>mpp_pe, npes=>mpp_npes, mpp_broadcast
+  use mpp_mod, only : mpp_sync_self, pe=>mpp_pe, npes=>mpp_npes
   use mpp_mod, only : mpp_clock_id, mpp_clock_begin, mpp_clock_end, mpp_root_pe
   use time_manager_mod, only : time_type, get_time
   use constants_mod, only : DEG_TO_RAD, RADIUS
@@ -70,8 +69,8 @@ contains
             salt_to_temp, temp_to_salt, debug_eakf
 
     !--- module name and version number ----
-    character(len=*), parameter :: module_name = 'eakf'
-    character(len=*), parameter :: vers_num = 'x00.0'
+    !character(len=*), parameter :: module_name = 'eakf'
+    !character(len=*), parameter :: vers_num = 'x00.0'
 
     !=======================================================================
     integer :: assim_var = 1 ! 1 for self update, 2 for cross-variable update
@@ -103,11 +102,10 @@ contains
     integer :: i, j, k, k0, kk, num, blk, i_idx, salt_offset
     integer :: t_tau, s_tau
     integer :: kk0, kk1, kk2
-    integer :: model_size!, lji
+    integer :: model_size
     integer :: unit, ierr, io, j_ens, i_h, kk_bot
     integer :: diff_days, diff_seconds
     real :: diff_hours, diff_k
-    integer, dimension(20) :: ind_unit
 
     !---------------------------------------------------------------------------
     real :: obs_value, obs_sigma_t, obs_sigma_s, obs_var_t, obs_var_s
@@ -138,12 +136,14 @@ contains
 
     !---------------------------------------------------------------------------
 
-    id_eakf_total = mpp_clock_id('(total eakf computation)')
+    id_eakf_total = mpp_clock_id('(ODA filter computation)')
     call mpp_clock_begin(id_eakf_total)
 
     call mpp_get_compute_domain(Domain, isc, iec, jsc, jec)
     call mpp_get_data_domain(Domain, isd, ied, jsd, jed)
     call mpp_get_global_domain(Domain, isg, ieg, jsg, jeg)
+    isc = isc - isd + 1 ; iec = iec - isd + 1 ; jsc = jsc - jsd + 1 ; jec = jec - jsd + 1
+    ied = ied - isd + 1 ; jed = jed - jsd + 1 ; isd = 1 ; jsd = 1
     halox = isc - isd
     haloy = jsc - jsd
     ni = ieg-isg+1; nj = jeg-jsg+1
@@ -162,11 +162,8 @@ contains
        end if
     end if
 
-    ! Write the namelist to a log file
-    call write_version_number(vers_num, module_name, blk)
-
     model_size = blk * nk * 2
-    if ( .not.module_initialized ) then
+    if ( .not. module_initialized ) then
        call eakf_oda_init(model_size, ens_size, blk)
     
        allocate( glon1d(blk), glat1d(blk) )

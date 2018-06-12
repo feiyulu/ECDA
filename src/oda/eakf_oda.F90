@@ -12,7 +12,8 @@ module eakf_oda_mod
   use mpp_mod, only : mpp_clock_id, mpp_clock_begin, mpp_clock_end, mpp_root_pe
   use time_manager_mod, only : time_type, get_time
   use constants_mod, only : DEG_TO_RAD, RADIUS
-  use mpp_domains_mod, only : domain2d, mpp_get_data_domain, mpp_get_compute_domain, mpp_get_global_domain
+  use mpp_domains_mod, only : mpp_get_data_domain, mpp_get_compute_domain, mpp_get_global_domain
+  use mpp_domains_mod, only : domain2d, mpp_update_domains
 
   ! ODA Modules
   use oda_types_mod, only : ocean_profile_type, TEMP_ID, SALT_ID, missing_value
@@ -46,7 +47,7 @@ contains
     type(ocean_control_struct), pointer, intent(inout) :: Posterior
     type(ocean_profile_type), pointer, intent(in) :: Profiles
     type(kd_root), pointer, intent(inout) :: kdroot
-    type(domain2d), intent(in) :: Domain
+    type(domain2d), pointer :: Domain
     type(grid_type), pointer, intent(in) :: oda_grid
 
     !---- namelist with default values
@@ -189,9 +190,10 @@ contains
     if ( pe() == mpp_root_pe() .and. first_run_call ) then
        write (stdout_unit, *) 'model size is ', model_size, 'ensemble size is ', ens_size
        write (stdout_unit, *) 'mean_inflate is ', mean_inflate, 'cov_inflate is ', cov_inflate
-       write (stdout_unit, *) 'temp obs standard derivation is ', sigma_o_t
-       write (stdout_unit, *) 'salt obs standard derivation is ', sigma_o_s
-       write (stdout_unit, *) 'impact_levels is ', impact_levels
+       write (stdout_unit, *) 'temp/salt obs standard derivation is ', sigma_o_t, sigma_o_s
+       write (stdout_unit, *) 'temp/salt localization radius is ', temp_dist, salt_dist
+       write (stdout_unit, *) 'vertial impact levels ', impact_levels
+       write (stdout_unit, *) 'temporal impact hours ', update_window
        write (stdout_unit, *) 'depth_cut is', depth_cut
        write (stdout_unit, *) 'e_flder_oer is', e_flder_oer
        write (stdout_unit, *) 'temp(salt)_to_salt(temp) is', temp_to_salt, salt_to_temp
@@ -549,6 +551,11 @@ contains
     call mpp_sync_self()
     call red_ens(Posterior%T, Posterior%S, isd, ied, jsd, jed, halox, haloy, nk, ens)
 
+    do j_ens=1,ens_size
+      call mpp_update_domains(Posterior%T(:,:,:,j_ens), Domain)
+      call mpp_update_domains(Posterior%S(:,:,:,j_ens), Domain)
+    enddo
+   
     ens_mean = sum(ens, dim=2) / ens_size
     Prof => Profiles
     do while (associated(Prof))

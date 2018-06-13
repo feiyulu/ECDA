@@ -14,6 +14,7 @@ module eakf_oda_mod
   use constants_mod, only : DEG_TO_RAD, RADIUS
   use mpp_domains_mod, only : mpp_get_data_domain, mpp_get_compute_domain, mpp_get_global_domain
   use mpp_domains_mod, only : domain2d, mpp_update_domains
+  use gsw_mod_toolbox, only : gsw_pt_from_t
 
   ! ODA Modules
   use oda_types_mod, only : ocean_profile_type, TEMP_ID, SALT_ID, missing_value
@@ -205,7 +206,7 @@ contains
     end if
 
     ! Form the ensemble state vector: ens(:, :)
-    call ens_ics(Prior%T, Prior%S, isd, ied, jsd, jed, halox, haloy, nk, ens)
+    call ens_ics(Prior%T, Prior%S, oda_grid%z, isd, ied, jsd, jed, halox, haloy, nk, ens)
 
     if ( debug_eakf ) then
        write (UNIT=stdout_unit, FMT='("PE ",I5,": finished ens_ics")') pe()
@@ -549,7 +550,7 @@ contains
     ! Redistribute the sub ensemble state vector ens(:, :) back to the model grids
     ! in the local-domain.
     call mpp_sync_self()
-    call red_ens(Posterior%T, Posterior%S, isd, ied, jsd, jed, halox, haloy, nk, ens)
+    call red_ens(Posterior%T, Posterior%S, oda_grid%z, isd, ied, jsd, jed, halox, haloy, nk, ens)
 
     do j_ens=1,ens_size
       call mpp_update_domains(Posterior%T(:,:,:,j_ens), Domain)
@@ -625,8 +626,9 @@ contains
     module_initialized = .true.
   end subroutine eakf_oda_init
 
-  subroutine ens_ics(T_ensemble, S_ensemble, isd, ied, jsd, jed, halox, haloy, nk, as)
+  subroutine ens_ics(T_ensemble, S_ensemble, z, isd, ied, jsd, jed, halox, haloy, nk, as)
     real, pointer, intent(in), dimension(:,:,:,:) :: T_ensemble, S_ensemble
+    real, pointer, dimension(:,:,:) :: z
     integer, intent(in) :: isd, ied, jsd, jed, halox, haloy, nk
     real, intent(inout), dimension(:,:) :: as
 
@@ -641,7 +643,9 @@ contains
           do j=jsd, jed ! add halo grids 4 each pedomain in y
              do i=isd, ied ! add halo grids 4 each pedomain in x
                 idx = (k-1)*blk_h + (j-jsd)*(ied-isd+1) + i-isd+1
-                as(idx, m) = T_ensemble(i,j,k,m)
+                !as(idx, m) = T_ensemble(i,j,k,m)
+                ! Change from potential T in the prior to in-situ T for filter update
+                as(idx, m) = gsw_pt_from_t(S_ensemble(i,j,k,m),T_ensemble(i,j,k,m),0.0,z(i,j,k))
                 idx = blk_h*nk + idx
                 as(idx, m) = S_ensemble(i,j,k,m)
              end do
@@ -650,12 +654,13 @@ contains
     end do
   end subroutine ens_ics
 
-  subroutine red_ens(T_ensemble, S_ensemble, isd, ied, jsd, jed, halox, haloy, nk, as)
+  subroutine red_ens(T_ensemble, S_ensemble, z, isd, ied, jsd, jed, halox, haloy, nk, as)
     real, pointer, intent(inout), dimension(:,:,:,:) :: T_ensemble, S_ensemble
+    real, pointer, dimension(:,:,:) :: z
     integer, intent(in) :: isd, ied, jsd, jed, halox, haloy, nk
     real, intent(in), dimension(:,:) :: as
 
-    integer :: m, i, j, k, idx, blk_h
+    integer :: m, i, j, k, idx, idx_s, blk_h
 
     !  Get initial state for ensemble members
     blk_h = (ied-isd+1)*(jed-jsd+1)
@@ -665,9 +670,11 @@ contains
           do j=jsd+haloy, jed-haloy ! drop halo
              do i=isd+halox, ied-halox ! drop halo
                 idx = (k-1)*blk_h + (j-jsd)*(ied-isd+1) + i-isd+1
-                T_ensemble(i,j,k,m) = as(idx, m)
-                idx = blk_h*nk + idx
-                S_ensemble(i,j,k,m) = as(idx, m)
+                !T_ensemble(i,j,k,m) = as(idx, m)
+                idx_s = blk_h*nk + idx
+                ! Change from in-situ T back to potential T for the posterior
+                T_ensemble(i,j,k,m) = gsw_pt_from_t(as(idx_s, m),as(idx, m),z(i,j,k),0.0)
+                S_ensemble(i,j,k,m) = as(idx_s, m)
              end do
           end do
        end do

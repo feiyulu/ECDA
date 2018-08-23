@@ -31,6 +31,7 @@ module eakf_oda_mod
   logical, save :: first_run_call = .true.
   logical, save :: module_initialized = .false.
 
+  real, save :: prof_count=0.0, outlier_count=0.0
   real, allocatable, dimension(:,:) :: ens
   real, allocatable, dimension(:) :: ens_mean, ens_inc
   real, allocatable, dimension(:) :: enso_temp, obs_inc_eakf_temp, obs_inc_oi_temp
@@ -65,10 +66,12 @@ contains
     real :: depth_cut = 2000.0
     real :: e_flder_oer = 2000.0
     logical :: debug_eakf = .false.
+    logical :: outlier_qc = .true.
+    real :: outlier_limit = 5
 
     namelist /eakf_nml/sigma_o_t, sigma_o_s, impact_levels, &
             update_window, temp_dist, salt_dist, depth_cut, e_flder_oer, &
-            salt_to_temp, temp_to_salt, debug_eakf
+            salt_to_temp, temp_to_salt, debug_eakf, outlier_qc, outlier_limit
 
     !--- module name and version number ----
     !character(len=*), parameter :: module_name = 'eakf'
@@ -119,6 +122,7 @@ contains
     real :: dist, dist0
     real :: v2_h, v2_l
     real :: depth_bot
+    real :: var_ratio
 
     !---------------------------------------------------------------------------
     character(len=40) :: file_name
@@ -198,7 +202,7 @@ contains
        write (stdout_unit, *) 'depth_cut is', depth_cut
        write (stdout_unit, *) 'e_flder_oer is', e_flder_oer
        write (stdout_unit, *) 'temp(salt)_to_salt(temp) is', temp_to_salt, salt_to_temp
-
+       write (stdout_unit, *) 'outlier qc switch and ratio limit', outlier_qc, outlier_limit
     end if
 
     if ( debug_eakf ) then
@@ -363,177 +367,183 @@ contains
                             obs_value = Prof%data(kk)
                             obs_var_t = obs_sigma_t * obs_sigma_t
                             call obs_increment_prf_eta_hyb(enso_temp, ens_size, obs_value, obs_var_t,&
-                                 & obs_inc_eakf_temp, obs_var_t_oi, obs_inc_oi_temp, std_bg)
+                                 & obs_inc_eakf_temp, obs_var_t_oi, obs_inc_oi_temp, std_bg, var_ratio)
                          elseif ( Prof%variable == SALT_ID ) then
                             obs_sigma_s = sigma_o_s*exp(-Prof%depth(kk)/e_flder_oer)
                             obs_value = Prof%data(kk)
                             obs_var_s = obs_sigma_s * obs_sigma_s
                             call obs_increment_prf_eta_hyb(enso_salt, ens_size, obs_value, obs_var_s,&
-                                 & obs_inc_eakf_salt, obs_var_s_oi, obs_inc_oi_salt, std_bg)
+                                 & obs_inc_eakf_salt, obs_var_s_oi, obs_inc_oi_salt, std_bg, var_ratio)
                          end if
 
-                         kk0 = Prof%k_index(kk)
-                         kk1 = kk0 - 2 * impact_levels +1
-                         kk2 = kk0 + 2 * impact_levels
-                         if(kk1 < 1) kk1 = 1
-                         if(kk2 > nk) kk2 = nk
-
-                         doloop_3: do kk_ens=kk1, kk2 ! (3)
-                            t_tau   = (kk_ens-1)*blk + i_h
-                            s_tau   = salt_offset + t_tau
-                            if ( kk_ens <= kk0 ) then
-                              diff_k = kk0 - kk_ens + 1
-                            else
-                              diff_k = kk_ens - kk0
-                            end if
-                            cov_factor_v = comp_cov_factor( diff_k, REAL(impact_levels) )
-                            cov_factor = cov_factor_v * cov_factor_t
-
-                            ifblock_2: if ( ens_mean(t_tau) /= 0.0 ) then ! (2) using ens_mean(t_tau) as mask
-                               ifblock_1: if ( cov_factor > 0.0 ) then ! (1)
-                                  ifblock_0_60: if ( Prof%variable == TEMP_ID ) then ! (0.60)
-                                     ! using temperature adjusts temperature and salinity
-                                     ! temperature itself
-                                     if ( abs(obs_loc%lat) < 80.0 ) then
-                                        dist0 = temp_dist*cos(obs_loc%lat*DEG_TO_RAD)
-                                     else
-                                        dist0 = temp_dist*cos(80.0*DEG_TO_RAD)
-                                     end if
-
-                                     cov_factor_h = comp_cov_factor(dist, dist0) * &
-                                             cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
-                                     cov_factor = cov_factor_h * cov_factor_v * cov_factor_t
-                                     assim_var = 1
-                                     ens_inc(:) = 0.0
-                                     ifblock_0_60_1: if ( ens_mean(t_tau) /= 0.0 .and. cov_factor /= 0.0 ) then
-                                        call update_from_obs_inc_prf_hyb(enso_temp, obs_inc_eakf_temp, &
-                                                obs_inc_oi_temp, ens(t_tau, :), ens_size, ens_inc, cov_factor, &
-                                                cor_oi, std_oi_o, std_oi_g, assim_var, flag_hyb)
-                                        ens(t_tau, :) = ens(t_tau, :) + ens_inc(:)
-
-                                        ! limit the unreasonable values if applicable
-                                        doloop_0: do j_ens=1, ens_size ! (0)
-                                           if ( ens(t_tau, j_ens) > 39.0 ) then
-                                              write (UNIT=stdout_unit, FMT='("T(",3I5,") = ",F15.8)')&
-                                                   & ii_ens, jj_ens, kk_ens, ens(t_tau,j_ens)
-                                              ens(t_tau, j_ens) = 39.0
-                                           end if
-                                           if ( ens(t_tau, j_ens) < -4.0 ) then
-                                              write (UNIT=stdout_unit, FMT='("T(",3I5,") = ",F25.8)')&
-                                                   & ii_ens, jj_ens, kk_ens, ens(t_tau,j_ens)
-                                              ens(t_tau, j_ens) = -4.0
-                                           end if
-                                        end do doloop_0 ! handle the extremeties (0)
-                                     end if ifblock_0_60_1
-
-                                     ! temperature impact salinity
-                                     ifblock_0_50: if ( temp_to_salt ) then ! (0.5)
-                                        if ( abs(obs_loc%lat) < 80.0 ) then
-                                           dist0 = temp_dist*cos(obs_loc%lat*DEG_TO_RAD)
-                                        else
-                                           dist0 = temp_dist*cos(80.0*DEG_TO_RAD)
-                                        end if
-
-                                        cov_factor_h = comp_cov_factor(dist, dist0) * &
-                                                cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
-                                        cov_factor = cov_factor_h * cov_factor_v * cov_factor_t
-                                        assim_var = 2
-                                        ens_inc(:) = 0.0
-
-                                        ifblock_0_50_1: if ( ens_mean(s_tau) /= 0.0 .and. cov_factor /= 0.0 ) then
-                                           call update_from_obs_inc_prf_hyb(enso_temp, obs_inc_eakf_temp, &
-                                                   obs_inc_oi_temp, ens(s_tau, :), ens_size, ens_inc, cov_factor, &
-                                                   cor_oi, std_oi_o, std_oi_g, assim_var, flag_hyb)
-                                           ens(s_tau, :) = ens(s_tau, :) + ens_inc(:)
-
-                                           ! limit the unreasonable values if applicable
-                                           doloop_00: do j_ens = 1, ens_size ! (0)
-                                              if ( ens(s_tau, j_ens) > 44.0 ) then
-                                                 write (UNIT=stdout_unit, FMT='("S(",3I5,") = ",F15.8)') &
-                                                      & ii_ens, jj_ens, kk_ens, ens(s_tau,j_ens)
-                                                 ens(s_tau, j_ens) = 44.0
-                                              end if
-
-                                              if ( ens(s_tau, j_ens) < 0.0 ) then
-                                                 write (UNIT=stdout_unit, FMT='("S(",3I5,") = ",F15.8)')&
-                                                      & ii_ens, jj_ens, kk_ens, ens(s_tau,j_ens)
-                                                 ens(s_tau, j_ens) = 0.0
-                                              end if
-                                           end do doloop_00 ! handle the extremeties (0)
-                                        end if ifblock_0_50_1
-                                     end if ifblock_0_50 ! impact salinity or not (0.5)
-                                  
-                                  elseif ( Prof%variable == SALT_ID ) then ! (0.60)
-                                     if ( abs(obs_loc%lat) < 80.0 ) then
-                                        dist0 = salt_dist*cos(obs_loc%lat*DEG_TO_RAD)
-                                     else
-                                        dist0 = salt_dist*cos(80.0*DEG_TO_RAD)
-                                     end if
-
-                                     cov_factor_h = comp_cov_factor(dist, dist0)*&
-                                          & cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
-                                     cov_factor = cov_factor_h * cov_factor_v * cov_factor_t
-                                     assim_var = 1
-                                     ens_inc(:) = 0.0
-                                     ifblock_0_61_1: if ( ens_mean(s_tau) /= 0.0 .and. cov_factor /= 0.0 ) then
-                                        call update_from_obs_inc_prf_hyb(enso_salt, obs_inc_eakf_salt, &
-                                                obs_inc_oi_salt, ens(s_tau, :), ens_size, ens_inc, cov_factor, &
-                                                cor_oi, std_oi_o, std_oi_g, assim_var, flag_hyb)
-                                        ens(s_tau, :) = ens(s_tau, :) + ens_inc(:)
-
-                                        ! limit the unreasonable values if applicable
-                                        do j_ens = 1, ens_size ! (0)
-                                           if ( ens(s_tau, j_ens) > 44.0 ) then
-                                              write (UNIT=stdout_unit, FMT='("S(",3I5,") = ",F15.8)')&
-                                                   & ii_ens, jj_ens, kk_ens, ens(s_tau,j_ens)
-                                              ens(s_tau, j_ens) = 44.0
-                                           end if
-                                           if ( ens(s_tau, j_ens) < 0.0 ) then
-                                              write (UNIT=stdout_unit, FMT='("S(",3I5,") = ",F15.8)')&
-                                                   & ii_ens, jj_ens, kk_ens, ens(s_tau,j_ens)
-                                              ens(s_tau, j_ens) = 0.0
-                                           end if
-                                        end do ! handle the extremeties (0)
-                                     end if ifblock_0_61_1
-
-                                     ! salinity impact temperature
-                                     ifblock_0_5: if ( salt_to_temp ) then ! (0.5)
-                                        if ( abs(obs_loc%lat) < 80.0 ) then
-                                           dist0 = salt_dist*cos(obs_loc%lat*DEG_TO_RAD)
-                                        else
-                                           dist0 = salt_dist*cos(80.0*DEG_TO_RAD)
-                                        end if
-
-                                        cov_factor_h = comp_cov_factor(dist, dist0)*&
-                                             & cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
-                                        cov_factor = cov_factor_h * cov_factor_v * cov_factor_t
-                                        assim_var = 2
-                                        ens_inc(:) = 0.0
-                                        ifblock_0_5_1: if ( ens_mean(t_tau) /= 0.0 .and. cov_factor /= 0.0 ) then
-                                           call update_from_obs_inc_prf_hyb(enso_salt, obs_inc_eakf_salt, &
-                                                   obs_inc_oi_salt, ens(t_tau, :), ens_size, ens_inc, cov_factor, &
-                                                   cor_oi, std_oi_o, std_oi_g, assim_var, flag_hyb)
-                                           ens(t_tau, :) = ens(t_tau, :) + ens_inc(:)
-
-                                           ! limit the unreasonable values if applicable
-                                           do j_ens = 1, ens_size ! (0)
-                                              if ( ens(t_tau, j_ens) > 39.0 ) then
-                                                 write (UNIT=stdout_unit, FMT='("T(",3I5,") = ",F15.8)')&
-                                                      & ii_ens, jj_ens, kk_ens, ens(t_tau,j_ens)
-                                                 ens(t_tau, j_ens) = 39.0
-                                              end if
-                                              if(ens(t_tau, j_ens) < -4.0) then
-                                                 write (UNIT=stdout_unit, FMT='("T(",3I5,") = ",F15.8)')&
-                                                      & ii_ens, jj_ens, kk_ens, ens(t_tau,j_ens)
-                                                 ens(t_tau, j_ens) = -4.0
-                                              end if
-                                           end do ! handle the extremeties (0)
-                                        end if ifblock_0_5_1
-                                     end if ifblock_0_5 ! impact temperature or not (0.5)
-                                 end if ifblock_0_60 ! finish processing profiles (0.60)
-                              end if ifblock_1 ! only use obs which has cov_factor > 0.0 (1)
-                            end if ifblock_2 ! only do non-masked points (2)
-                         end do doloop_3 ! finish adjustments for related model levels (3)
+                         prof_count=prof_count+1
+                         if (var_ratio>outlier_limit) outlier_count=outlier_count+1
+                         if (outlier_qc .and. var_ratio>outlier_limit) then
+                           !print *,"outlier obs, var ratio=",var_ratio
+                         else
+                           kk0 = Prof%k_index(kk)
+                           kk1 = kk0 - 2 * impact_levels +1
+                           kk2 = kk0 + 2 * impact_levels
+                           if(kk1 < 1) kk1 = 1
+                           if(kk2 > nk) kk2 = nk
+  
+                           doloop_3: do kk_ens=kk1, kk2 ! (3)
+                              t_tau   = (kk_ens-1)*blk + i_h
+                              s_tau   = salt_offset + t_tau
+                              if ( kk_ens <= kk0 ) then
+                                diff_k = kk0 - kk_ens + 1
+                              else
+                                diff_k = kk_ens - kk0
+                              end if
+                              cov_factor_v = comp_cov_factor( diff_k, REAL(impact_levels) )
+                              cov_factor = cov_factor_v * cov_factor_t
+  
+                              ifblock_2: if ( ens_mean(t_tau) /= 0.0 ) then ! (2) using ens_mean(t_tau) as mask
+                                 ifblock_1: if ( cov_factor > 0.0 ) then ! (1)
+                                    ifblock_0_60: if ( Prof%variable == TEMP_ID ) then ! (0.60)
+                                       ! using temperature adjusts temperature and salinity
+                                       ! temperature itself
+                                       if ( abs(obs_loc%lat) < 80.0 ) then
+                                          dist0 = temp_dist*cos(obs_loc%lat*DEG_TO_RAD)
+                                       else
+                                          dist0 = temp_dist*cos(80.0*DEG_TO_RAD)
+                                       end if
+  
+                                       cov_factor_h = comp_cov_factor(dist, dist0) * &
+                                               cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
+                                       cov_factor = cov_factor_h * cov_factor_v * cov_factor_t
+                                       assim_var = 1
+                                       ens_inc(:) = 0.0
+                                       ifblock_0_60_1: if ( ens_mean(t_tau) /= 0.0 .and. cov_factor /= 0.0 ) then
+                                          call update_from_obs_inc_prf_hyb(enso_temp, obs_inc_eakf_temp, &
+                                                  obs_inc_oi_temp, ens(t_tau, :), ens_size, ens_inc, cov_factor, &
+                                                  cor_oi, std_oi_o, std_oi_g, assim_var, flag_hyb)
+                                          ens(t_tau, :) = ens(t_tau, :) + ens_inc(:)
+  
+                                          ! limit the unreasonable values if applicable
+                                          doloop_0: do j_ens=1, ens_size ! (0)
+                                             if ( ens(t_tau, j_ens) > 39.0 ) then
+                                                write (UNIT=stdout_unit, FMT='("T(",3I5,") = ",F15.8)')&
+                                                     & ii_ens, jj_ens, kk_ens, ens(t_tau,j_ens)
+                                                ens(t_tau, j_ens) = 39.0
+                                             end if
+                                             if ( ens(t_tau, j_ens) < -4.0 ) then
+                                                write (UNIT=stdout_unit, FMT='("T(",3I5,") = ",F25.8)')&
+                                                     & ii_ens, jj_ens, kk_ens, ens(t_tau,j_ens)
+                                                ens(t_tau, j_ens) = -4.0
+                                             end if
+                                          end do doloop_0 ! handle the extremeties (0)
+                                       end if ifblock_0_60_1
+  
+                                       ! temperature impact salinity
+                                       ifblock_0_50: if ( temp_to_salt ) then ! (0.5)
+                                          if ( abs(obs_loc%lat) < 80.0 ) then
+                                             dist0 = temp_dist*cos(obs_loc%lat*DEG_TO_RAD)
+                                          else
+                                             dist0 = temp_dist*cos(80.0*DEG_TO_RAD)
+                                          end if
+  
+                                          cov_factor_h = comp_cov_factor(dist, dist0) * &
+                                                  cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
+                                          cov_factor = cov_factor_h * cov_factor_v * cov_factor_t
+                                          assim_var = 2
+                                          ens_inc(:) = 0.0
+  
+                                          ifblock_0_50_1: if ( ens_mean(s_tau) /= 0.0 .and. cov_factor /= 0.0 ) then
+                                             call update_from_obs_inc_prf_hyb(enso_temp, obs_inc_eakf_temp, &
+                                                     obs_inc_oi_temp, ens(s_tau, :), ens_size, ens_inc, cov_factor, &
+                                                     cor_oi, std_oi_o, std_oi_g, assim_var, flag_hyb)
+                                             ens(s_tau, :) = ens(s_tau, :) + ens_inc(:)
+  
+                                             ! limit the unreasonable values if applicable
+                                             doloop_00: do j_ens = 1, ens_size ! (0)
+                                                if ( ens(s_tau, j_ens) > 44.0 ) then
+                                                   write (UNIT=stdout_unit, FMT='("S(",3I5,") = ",F15.8)') &
+                                                        & ii_ens, jj_ens, kk_ens, ens(s_tau,j_ens)
+                                                   ens(s_tau, j_ens) = 44.0
+                                                end if
+  
+                                                if ( ens(s_tau, j_ens) < 0.0 ) then
+                                                   write (UNIT=stdout_unit, FMT='("S(",3I5,") = ",F15.8)')&
+                                                        & ii_ens, jj_ens, kk_ens, ens(s_tau,j_ens)
+                                                   ens(s_tau, j_ens) = 0.0
+                                                end if
+                                             end do doloop_00 ! handle the extremeties (0)
+                                          end if ifblock_0_50_1
+                                       end if ifblock_0_50 ! impact salinity or not (0.5)
+                                    
+                                    elseif ( Prof%variable == SALT_ID ) then ! (0.60)
+                                       if ( abs(obs_loc%lat) < 80.0 ) then
+                                          dist0 = salt_dist*cos(obs_loc%lat*DEG_TO_RAD)
+                                       else
+                                          dist0 = salt_dist*cos(80.0*DEG_TO_RAD)
+                                       end if
+  
+                                       cov_factor_h = comp_cov_factor(dist, dist0)*&
+                                            & cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
+                                       cov_factor = cov_factor_h * cov_factor_v * cov_factor_t
+                                       assim_var = 1
+                                       ens_inc(:) = 0.0
+                                       ifblock_0_61_1: if ( ens_mean(s_tau) /= 0.0 .and. cov_factor /= 0.0 ) then
+                                          call update_from_obs_inc_prf_hyb(enso_salt, obs_inc_eakf_salt, &
+                                                  obs_inc_oi_salt, ens(s_tau, :), ens_size, ens_inc, cov_factor, &
+                                                  cor_oi, std_oi_o, std_oi_g, assim_var, flag_hyb)
+                                          ens(s_tau, :) = ens(s_tau, :) + ens_inc(:)
+  
+                                          ! limit the unreasonable values if applicable
+                                          do j_ens = 1, ens_size ! (0)
+                                             if ( ens(s_tau, j_ens) > 44.0 ) then
+                                                write (UNIT=stdout_unit, FMT='("S(",3I5,") = ",F15.8)')&
+                                                     & ii_ens, jj_ens, kk_ens, ens(s_tau,j_ens)
+                                                ens(s_tau, j_ens) = 44.0
+                                             end if
+                                             if ( ens(s_tau, j_ens) < 0.0 ) then
+                                                write (UNIT=stdout_unit, FMT='("S(",3I5,") = ",F15.8)')&
+                                                     & ii_ens, jj_ens, kk_ens, ens(s_tau,j_ens)
+                                                ens(s_tau, j_ens) = 0.0
+                                             end if
+                                          end do ! handle the extremeties (0)
+                                       end if ifblock_0_61_1
+  
+                                       ! salinity impact temperature
+                                       ifblock_0_5: if ( salt_to_temp ) then ! (0.5)
+                                          if ( abs(obs_loc%lat) < 80.0 ) then
+                                             dist0 = salt_dist*cos(obs_loc%lat*DEG_TO_RAD)
+                                          else
+                                             dist0 = salt_dist*cos(80.0*DEG_TO_RAD)
+                                          end if
+  
+                                          cov_factor_h = comp_cov_factor(dist, dist0)*&
+                                               & cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
+                                          cov_factor = cov_factor_h * cov_factor_v * cov_factor_t
+                                          assim_var = 2
+                                          ens_inc(:) = 0.0
+                                          ifblock_0_5_1: if ( ens_mean(t_tau) /= 0.0 .and. cov_factor /= 0.0 ) then
+                                             call update_from_obs_inc_prf_hyb(enso_salt, obs_inc_eakf_salt, &
+                                                     obs_inc_oi_salt, ens(t_tau, :), ens_size, ens_inc, cov_factor, &
+                                                     cor_oi, std_oi_o, std_oi_g, assim_var, flag_hyb)
+                                             ens(t_tau, :) = ens(t_tau, :) + ens_inc(:)
+  
+                                             ! limit the unreasonable values if applicable
+                                             do j_ens = 1, ens_size ! (0)
+                                                if ( ens(t_tau, j_ens) > 39.0 ) then
+                                                   write (UNIT=stdout_unit, FMT='("T(",3I5,") = ",F15.8)')&
+                                                        & ii_ens, jj_ens, kk_ens, ens(t_tau,j_ens)
+                                                   ens(t_tau, j_ens) = 39.0
+                                                end if
+                                                if(ens(t_tau, j_ens) < -4.0) then
+                                                   write (UNIT=stdout_unit, FMT='("T(",3I5,") = ",F15.8)')&
+                                                        & ii_ens, jj_ens, kk_ens, ens(t_tau,j_ens)
+                                                   ens(t_tau, j_ens) = -4.0
+                                                end if
+                                             end do ! handle the extremeties (0)
+                                          end if ifblock_0_5_1
+                                       end if ifblock_0_5 ! impact temperature or not (0.5)
+                                   end if ifblock_0_60 ! finish processing profiles (0.60)
+                                end if ifblock_1 ! only use obs which has cov_factor > 0.0 (1)
+                              end if ifblock_2 ! only do non-masked points (2)
+                           end do doloop_3 ! finish adjustments for related model levels (3)
+                         end if ! var_ratio
                       end if ! add each level flag
                    end do doloop_4 ! go through one profile column (4)
                 end if ifblock_4_4 ! T,S -> T,S,U,V,tx,ty; ETA -> T,S,U,V (4.4)
@@ -590,6 +600,9 @@ contains
 
     if ( debug_eakf ) then
        write (UNIT=stdout_unit, FMT='("PE ",I5,": finished red_ens")') pe()
+       if(prof_count>0 .and. outlier_count/prof_count>0.01) then
+          print *, 'pe=', pe(), 'outliers=', outlier_count, 'ratio=', outlier_count/prof_count
+       endif
     end if
 
     first_run_call = .false.

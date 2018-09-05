@@ -31,7 +31,7 @@ module eakf_oda_mod
   logical, save :: first_run_call = .true.
   logical, save :: module_initialized = .false.
 
-  real, save :: prof_count=0.0, outlier_count=0.0
+  integer, save :: prof_count=0, outlier_count=0
   real, allocatable, dimension(:,:) :: ens
   real, allocatable, dimension(:) :: ens_mean, ens_inc
   real, allocatable, dimension(:) :: enso_temp, obs_inc_eakf_temp, obs_inc_oi_temp
@@ -122,7 +122,7 @@ contains
     real :: dist, dist0
     real :: v2_h, v2_l
     real :: depth_bot
-    real :: var_ratio
+    real :: var_ratio = 0.0
 
     !---------------------------------------------------------------------------
     character(len=40) :: file_name
@@ -600,8 +600,8 @@ contains
 
     if ( debug_eakf ) then
        write (UNIT=stdout_unit, FMT='("PE ",I5,": finished red_ens")') pe()
-       if(prof_count>0 .and. outlier_count/prof_count>0.01) then
-          print *, 'pe=', pe(), 'outliers=', outlier_count, 'ratio=', outlier_count/prof_count
+       if(prof_count>0 .and. real(outlier_count)/real(prof_count)>0.01) then
+          print *, 'pe=', pe(), 'outliers=', outlier_count, 'ratio=', real(outlier_count)/real(prof_count)
        endif
     end if
 

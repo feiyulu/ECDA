@@ -18,6 +18,7 @@ module eakf_oda_mod
 
   ! ODA Modules
   use oda_types_mod, only : ocean_profile_type, TEMP_ID, SALT_ID, missing_value
+  use oda_types_mod, only : ODA_PFL, ODA_XBT, ODA_MRB
   use oda_types_mod, only : ocean_control_struct, grid_type
   use kdtree, only : kd_root, kd_search_radius, kd_init
 
@@ -53,12 +54,7 @@ contains
     type(grid_type), pointer, intent(in) :: oda_grid
 
     !---- namelist with default values
-    real :: cov_inflate = 1.0
-    real :: mean_inflate = 1.0
-    real :: sigma_o_t = 1.0
-    real :: sigma_o_s = 1.0
     integer :: impact_levels = 3
-    real :: update_window = 240.0
     real :: temp_dist = 1000.0e3
     real :: salt_dist = 500.0e3
     logical :: salt_to_temp = .false.
@@ -67,11 +63,11 @@ contains
     real :: e_flder_oer = 2000.0
     logical :: debug_eakf = .false.
     logical :: outlier_qc = .true.
-    real :: outlier_limit = 5
+    real :: temp_limit = 5.0
+    real :: salt_limit = 2.0
 
-    namelist /eakf_nml/sigma_o_t, sigma_o_s, impact_levels, &
-            update_window, temp_dist, salt_dist, depth_cut, e_flder_oer, &
-            salt_to_temp, temp_to_salt, debug_eakf, outlier_qc, outlier_limit
+    namelist /eakf_nml/impact_levels, temp_dist, salt_dist, depth_cut, e_flder_oer, &
+            salt_to_temp, temp_to_salt, debug_eakf, outlier_qc, temp_limit, salt_limit
 
     !--- module name and version number ----
     !character(len=*), parameter :: module_name = 'eakf'
@@ -109,11 +105,11 @@ contains
     integer :: kk0, kk1, kk2
     integer :: model_size
     integer :: unit, ierr, io, j_ens, i_h, kk_bot
-    integer :: diff_days, diff_seconds
-    real :: diff_hours, diff_k
+    integer :: diff_days, diff_seconds, window_days, window_seconds
+    real :: diff_hours, diff_k, window_hours
 
     !---------------------------------------------------------------------------
-    real :: obs_value, obs_sigma_t, obs_sigma_s, obs_var_t, obs_var_s
+    real :: obs_value, obs_sigma, obs_var
     real :: obs_var_t_oi = 0.0
     real :: obs_var_s_oi = 0.0
     real :: std_bg = 0.0
@@ -123,6 +119,7 @@ contains
     real :: v2_h, v2_l
     real :: depth_bot
     real :: var_ratio = 0.0
+    real :: outlier_limit = 5.0
 
     !---------------------------------------------------------------------------
     character(len=40) :: file_name
@@ -194,15 +191,13 @@ contains
     ! print namelist
     if ( pe() == mpp_root_pe() .and. first_run_call ) then
        write (stdout_unit, *) 'model size is ', model_size, 'ensemble size is ', ens_size
-       write (stdout_unit, *) 'mean_inflate is ', mean_inflate, 'cov_inflate is ', cov_inflate
-       write (stdout_unit, *) 'temp/salt obs standard derivation is ', sigma_o_t, sigma_o_s
        write (stdout_unit, *) 'temp/salt localization radius is ', temp_dist, salt_dist
        write (stdout_unit, *) 'vertial impact levels ', impact_levels
-       write (stdout_unit, *) 'temporal impact hours ', update_window
        write (stdout_unit, *) 'depth_cut is', depth_cut
        write (stdout_unit, *) 'e_flder_oer is', e_flder_oer
        write (stdout_unit, *) 'temp(salt)_to_salt(temp) is', temp_to_salt, salt_to_temp
-       write (stdout_unit, *) 'outlier qc switch and ratio limit', outlier_qc, outlier_limit
+       write (stdout_unit, *) 'outlier qc switch', outlier_qc
+       write (stdout_unit, *) 'outlier qc limit for T/S', temp_limit, salt_limit
     end if
 
     if ( debug_eakf ) then
@@ -273,10 +268,14 @@ contains
     Prof => Profiles
     doloop_9: do while (associated(Prof)) ! (9)
        k0 = Prof%levels
+       if ( Prof%variable == TEMP_ID ) outlier_limit=temp_limit
+       if ( Prof%variable == SALT_ID ) outlier_limit=salt_limit
 
        call get_time(Prof%tdiff, diff_seconds, diff_days)
        diff_hours = diff_seconds/3600 + diff_days * 24
-       cov_factor_t = comp_cov_factor(diff_hours, update_window)
+       call get_time(Prof%time_window, window_seconds, window_days)
+       window_hours = window_seconds/3600 + window_days * 24
+       cov_factor_t = comp_cov_factor(diff_hours, window_hours)
 
        if ( cov_factor_t > 0.0 ) then ! control 10d time window (5+ and 5-)
           obs_loc%lon = Prof%lon
@@ -362,17 +361,14 @@ contains
                             end if
                          end do
 
+                         obs_sigma = Prof%obs_error*exp(-Prof%depth(kk)/e_flder_oer)
+                         obs_value = Prof%data(kk)
+                         obs_var = obs_sigma * obs_sigma
                          if ( Prof%variable == TEMP_ID ) then
-                            obs_sigma_t = sigma_o_t*exp(-Prof%depth(kk)/e_flder_oer)
-                            obs_value = Prof%data(kk)
-                            obs_var_t = obs_sigma_t * obs_sigma_t
-                            call obs_increment_prf_eta_hyb(enso_temp, ens_size, obs_value, obs_var_t,&
+                            call obs_increment_prf_eta_hyb(enso_temp, ens_size, obs_value, obs_var,&
                                  & obs_inc_eakf_temp, obs_var_t_oi, obs_inc_oi_temp, std_bg, var_ratio)
                          elseif ( Prof%variable == SALT_ID ) then
-                            obs_sigma_s = sigma_o_s*exp(-Prof%depth(kk)/e_flder_oer)
-                            obs_value = Prof%data(kk)
-                            obs_var_s = obs_sigma_s * obs_sigma_s
-                            call obs_increment_prf_eta_hyb(enso_salt, ens_size, obs_value, obs_var_s,&
+                            call obs_increment_prf_eta_hyb(enso_salt, ens_size, obs_value, obs_var,&
                                  & obs_inc_eakf_salt, obs_var_s_oi, obs_inc_oi_salt, std_bg, var_ratio)
                          end if
 
@@ -384,6 +380,7 @@ contains
                            kk0 = Prof%k_index(kk)
                            kk1 = kk0 - 2 * impact_levels +1
                            kk2 = kk0 + 2 * impact_levels
+                           if(kk.eq.k0 .AND. depth_bot.gt.1500.0) kk2 = nk
                            if(kk1 < 1) kk1 = 1
                            if(kk2 > nk) kk2 = nk
   
@@ -396,6 +393,7 @@ contains
                                 diff_k = kk_ens - kk0
                               end if
                               cov_factor_v = comp_cov_factor( diff_k, REAL(impact_levels) )
+                              if(kk.eq.k0 .AND. depth_bot.gt.1500.0 .AND. kk_ens.gt.kk0) cov_factor_v  = 1.0
                               cov_factor = cov_factor_v * cov_factor_t
   
                               ifblock_2: if ( ens_mean(t_tau) /= 0.0 ) then ! (2) using ens_mean(t_tau) as mask
@@ -600,7 +598,7 @@ contains
 
     if ( debug_eakf ) then
        write (UNIT=stdout_unit, FMT='("PE ",I5,": finished red_ens")') pe()
-       if(prof_count>0 .and. real(outlier_count)/real(prof_count)>0.01) then
+       if(prof_count>0 .and. real(outlier_count)/real(prof_count)>0.05) then
           print *, 'pe=', pe(), 'outliers=', outlier_count, 'ratio=', real(outlier_count)/real(prof_count)
        endif
     end if

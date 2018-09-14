@@ -53,13 +53,13 @@ contains
     first_run_call = .false.
   end subroutine assim_tools_init
 
-  subroutine obs_increment_prf_eta_hyb(ens, ens_size, obs, obs_var, obs_inc_eakf, obs_var_oi, obs_inc_oi, std_oi,var_ratio)
+  subroutine obs_increment_prf_eta_hyb(ens, ens_size, obs, obs_var, obs_inc_eakf, obs_var_oi, obs_inc_oi, std_oi,obs_dist)
     integer, intent(in) :: ens_size
     real, intent(in), dimension(ens_size) :: ens
     real, intent(in) :: obs, obs_var, obs_var_oi
     real, intent(inout), dimension(ens_size) :: obs_inc_eakf, obs_inc_oi
     real, intent(in) :: std_oi
-    real, intent(out) :: var_ratio
+    real, intent(out) :: obs_dist
     real :: a, cov
     real :: mean, new_cov, new_mean
     real :: var_oi_bg
@@ -82,7 +82,7 @@ contains
 
     if ( cov == 0.0 ) return
 
-    var_ratio = abs(obs-mean)/sqrt(obs_var+cov)
+    obs_dist = abs(obs-mean)
     if ( cov < var_oi_bg ) then
        new_cov = (cov *obs_var)/(cov + obs_var)
        new_mean = new_cov * (obs_var*mean + cov*obs)/(cov*obs_var)

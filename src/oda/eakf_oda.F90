@@ -55,12 +55,15 @@ contains
 
     !---- namelist with default values
     real :: e_flder_oer = 2000.0
+    real :: depth_time_window = 200.0
+    real :: lat_time_window = 20.0
     logical :: debug_eakf = .false.
     logical :: outlier_qc = .true.
     real :: temp_limit = 5.0
     real :: salt_limit = 2.0
 
-    namelist /eakf_nml/ e_flder_oer, debug_eakf, outlier_qc, temp_limit, salt_limit
+    namelist /eakf_nml/ e_flder_oer, depth_time_window, lat_time_window, &
+            debug_eakf, outlier_qc, temp_limit, salt_limit
 
     !--- module name and version number ----
     !character(len=*), parameter :: module_name = 'eakf'
@@ -110,7 +113,7 @@ contains
     real :: std_oi_g = 0.0
     real :: dist, dist0
     real :: v2_h, v2_l
-    real :: depth_bot
+    real :: depth_bot, depth_kk
     real :: obs_dist = 5.0
     real :: outlier_limit = 5.0
 
@@ -264,8 +267,6 @@ contains
        diff_hours = diff_seconds/3600 + diff_days * 24
        call get_time(Prof%time_window, window_seconds, window_days)
        window_hours = window_seconds/3600 + window_days * 24
-       cov_factor_t = comp_cov_factor(diff_hours, window_hours)
-
        obs_loc%lon = Prof%lon
        obs_loc%lat = Prof%lat
 
@@ -326,6 +327,13 @@ contains
                 depth_bot = Prof%depth(k0)
                 doloop_4: do kk = 1, k0 ! (4)
                    if ( Prof%flag(kk) ) then ! add each level flag
+                      depth_kk = Prof%depth(kk)
+                      if ((Prof%inst_type .eq. ODA_PFL .or. Prof%inst_type .eq. ODA_XBT) &
+                              .and. abs(obs_loc%lat) .lt. lat_time_window .and. depth_kk .lt. depth_time_window) then
+                         cov_factor_t = comp_cov_factor(diff_hours, window_hours/2)
+                      else
+                         cov_factor_t = comp_cov_factor(diff_hours, window_hours)
+                      endif
                       do j_ens=1, ens_size
                          v2_h = 0.0
                          v2_l = 0.0
@@ -372,7 +380,7 @@ contains
                          kk0 = Prof%k_index(kk)
                          kk1 = kk0 - 2 * Prof%impact_levels +1
                          kk2 = kk0 + 2 * Prof%impact_levels
-                         if(kk.eq.k0 .AND. depth_bot.gt.1500.0) kk2 = nk
+                         if(Prof%inst_type .eq. ODA_PFL .and. kk.eq.k0 .AND. depth_bot.gt.1500.0) kk2 = nk
                          if(kk1 < 1) kk1 = 1
                          if(kk2 > nk) kk2 = nk
    

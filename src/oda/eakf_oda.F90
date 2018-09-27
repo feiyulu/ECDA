@@ -17,9 +17,9 @@ module eakf_oda_mod
   use gsw_mod_toolbox, only : gsw_pt_from_t
 
   ! ODA Modules
-  use oda_types_mod, only : ocean_profile_type, TEMP_ID, SALT_ID, missing_value
-  use oda_types_mod, only : ODA_PFL, ODA_XBT, ODA_MRB
-  use oda_types_mod, only : ocean_control_struct, grid_type
+  use ocean_da_types_mod, only : ocean_profile_type, TEMP_ID, SALT_ID, missing_value
+  use ocean_da_types_mod, only : ODA_PFL, ODA_XBT, ODA_MRB
+  use ocean_da_types_mod, only : ocean_control_struct, grid_type
   use kdtree, only : kd_root, kd_search_radius, kd_init
 
   ! EAKF modules

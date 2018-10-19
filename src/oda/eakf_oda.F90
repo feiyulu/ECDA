@@ -18,7 +18,7 @@ module eakf_oda_mod
 
   ! ODA Modules
   use ocean_da_types_mod, only : ocean_profile_type, TEMP_ID, SALT_ID, missing_value
-  use ocean_da_types_mod, only : ODA_PFL, ODA_XBT, ODA_MRB
+  use ocean_da_types_mod, only : ODA_PFL, ODA_XBT, ODA_MRB, ODA_OISST
   use ocean_da_types_mod, only : ocean_control_struct, grid_type
   use kdtree, only : kd_root, kd_search_radius, kd_init
 
@@ -270,10 +270,10 @@ contains
        obs_loc%lon = Prof%lon
        obs_loc%lat = Prof%lat
 
-       if ( abs(obs_loc%lat) < 80.0 ) then
+       if ( obs_loc%lat < 65.0 ) then
           dist0 = Prof%loc_dist*cos(obs_loc%lat*DEG_TO_RAD)
        else
-          dist0 = Prof%loc_dist*cos(80.0*DEG_TO_RAD)
+          dist0 = Prof%loc_dist*cos(65.0*DEG_TO_RAD)
        end if
        call kd_search_radius(kdroot, obs_loc%lon, obs_loc%lat, &
                2*dist0, kd_ind, kd_dist, kd_num, .true.)
@@ -328,9 +328,9 @@ contains
                 doloop_4: do kk = 1, k0 ! (4)
                    if ( Prof%flag(kk) ) then ! add each level flag
                       depth_kk = Prof%depth(kk)
-                      if ((Prof%inst_type .eq. ODA_PFL .or. Prof%inst_type .eq. ODA_XBT) &
+                      if ((Prof%inst_type.eq.ODA_PFL .or. Prof%inst_type.eq.ODA_XBT .or. Prof%inst_type.eq.ODA_OISST) &
                               .and. abs(obs_loc%lat) .lt. lat_time_window .and. depth_kk .lt. depth_time_window) then
-                         cov_factor_t = comp_cov_factor(diff_hours, window_hours/2)
+                         cov_factor_t = comp_cov_factor(diff_hours, 24.0)
                       else
                          cov_factor_t = comp_cov_factor(diff_hours, window_hours)
                       endif

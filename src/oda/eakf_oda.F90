@@ -39,6 +39,7 @@ module eakf_oda_mod
   real, allocatable, dimension(:) :: enso_salt, obs_inc_eakf_salt, obs_inc_oi_salt
   integer, allocatable, dimension(:) :: lon1d, lat1d
   integer, allocatable, dimension(:) :: kd_ind
+  integer, allocatable, dimension(:) :: random_seq
   real, allocatable, dimension(:) :: kd_dist
 
   public ensemble_filter
@@ -278,8 +279,12 @@ contains
        call kd_search_radius(kdroot, obs_loc%lon, obs_loc%lat, &
                2*dist0, kd_ind, kd_dist, kd_num, .true.)
 
+       random_seq = 0
+       call rperm(kd_num, random_seq(1:kd_num))
+
        doloop_8: do k=1, kd_num ! (8)
-          ii_ens = lon1d(kd_ind(k)); jj_ens = lat1d(kd_ind(k))
+          ii_ens = lon1d(kd_ind(random_seq(k)))
+          jj_ens = lat1d(kd_ind(random_seq(k)))
           i_h = (jj_ens-jsd)*(ied-isd+1)+ii_ens-isd+1
 
           model_loc%lon = oda_grid%x(ii_ens, jj_ens)
@@ -317,7 +322,7 @@ contains
                   !(model_loc%lon > 25.0 .and. model_loc%lon < 100.0) ) assim_flag = .false.
 
           ifblock_6: if ( assim_flag ) then ! (6)
-             dist = kd_dist(k)
+             dist = kd_dist(random_seq(k))
              cov_factor_h = comp_cov_factor(dist, dist0) * &
                      cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
 
@@ -583,6 +588,7 @@ contains
        allocate(obs_inc_oi_salt(ens_size), STAT=istat);         obs_inc_oi_salt = 0.0
        allocate(lon1d(blk), lat1d(blk) )
        allocate(kd_ind(blk) )
+       allocate(random_seq(blk) )
        allocate(kd_dist(blk) )
     end if
 
@@ -643,5 +649,32 @@ contains
        end do
     end do
   end subroutine red_ens
+
+  subroutine rperm(N, p)
+
+    integer, intent(in)                :: N
+    integer, dimension(:), intent(out) :: p
+
+    integer :: i
+    integer :: k, j, ipj, itemp, m
+    real, dimension(100) :: u
+
+    p = (/ (i, i=1,N) /)
+
+    ! Generate up to 100 U(0,1) numbers at a time.
+    do i=1,N,100
+      m = min(N-i+1, 100)
+      call random_number(u)
+      do j=1,m
+        ipj = i+j-1
+        k = int(u(j)*(N-ipj+1)) + ipj
+        itemp = p(ipj)
+        p(ipj) = p(k)
+        p(k) = itemp
+      end do
+    end do
+    return
+
+  end subroutine rperm
 
 end module eakf_oda_mod

@@ -101,7 +101,7 @@ contains
     integer :: t_tau, s_tau
     integer :: kk0, kk1, kk2
     integer :: model_size
-    integer :: unit, ierr, io, j_ens, i_h, kk_bot
+    integer :: unit, ierr, io, j_ens, i_h
     integer :: diff_days, diff_seconds, window_days, window_seconds
     real :: diff_hours, diff_k, window_hours
 
@@ -328,7 +328,6 @@ contains
 
              ifblock_4_4: if ( Prof%variable == TEMP_ID .or. &
                   & Prof%variable == SALT_ID ) then ! T,S -> T,S (4.4)
-                kk_bot = Prof%k_index(k0)
                 depth_bot = Prof%depth(k0)
                 doloop_4: do kk = 1, k0 ! (4)
                    if ( Prof%flag(kk) ) then ! add each level flag
@@ -382,7 +381,7 @@ contains
                       if (outlier_qc .and. obs_dist>outlier_limit) then
                          !print *,"outlier obs, var ratio=",obs_dist
                       else
-                         kk0 = Prof%k_index(kk)
+                         kk0 = FLOOR(Prof%k_index(kk))
                          kk1 = kk0 - 2 * Prof%impact_levels +1
                          kk2 = kk0 + 2 * Prof%impact_levels
                          if(Prof%inst_type .eq. ODA_PFL .and. kk.eq.k0 .AND. depth_bot.gt.1500.0) kk2 = nk
@@ -393,9 +392,9 @@ contains
                             t_tau   = (kk_ens-1)*blk + i_h
                             s_tau   = salt_offset + t_tau
                             if ( kk_ens <= kk0 ) then
-                              diff_k = kk0 - kk_ens + 1
+                              diff_k = Prof%k_index(kk) - REAL(kk_ens)
                             else
-                              diff_k = kk_ens - kk0
+                              diff_k = REAL(kk_ens) - Prof%k_index(kk)
                             end if
                             cov_factor_v = comp_cov_factor( diff_k, REAL(Prof%impact_levels) )
                             if(kk.eq.k0 .AND. depth_bot.gt.1500.0 .AND. kk_ens.gt.kk0) cov_factor_v  = 1.0

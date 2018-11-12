@@ -56,14 +56,14 @@ contains
 
     !---- namelist with default values
     real :: e_flder_oer = 2000.0
-    real :: depth_time_window = 200.0
-    real :: lat_time_window = 20.0
+    real :: depth_eq = 200.0
+    real :: lat_eq = 20.0
     logical :: debug_eakf = .false.
     logical :: outlier_qc = .true.
     real :: temp_limit = 5.0
     real :: salt_limit = 2.0
 
-    namelist /eakf_nml/ e_flder_oer, depth_time_window, lat_time_window, &
+    namelist /eakf_nml/ e_flder_oer, depth_eq, lat_eq, &
             debug_eakf, outlier_qc, temp_limit, salt_limit
 
     !--- module name and version number ----
@@ -191,6 +191,7 @@ contains
        write (stdout_unit, *) 'e_flder_oer is', e_flder_oer
        write (stdout_unit, *) 'outlier qc switch', outlier_qc
        write (stdout_unit, *) 'outlier qc limit for T/S', temp_limit, salt_limit
+       write (stdout_unit, *) 'Eq. lat and depth limit', lat_eq, depth_eq
     end if
 
     if ( debug_eakf ) then
@@ -332,11 +333,14 @@ contains
                 doloop_4: do kk = 1, k0 ! (4)
                    if ( Prof%flag(kk) ) then ! add each level flag
                       depth_kk = Prof%depth(kk)
-                      if ((Prof%inst_type.eq.ODA_PFL .or. Prof%inst_type.eq.ODA_XBT .or. Prof%inst_type.eq.ODA_OISST) &
-                              .and. abs(obs_loc%lat) .lt. lat_time_window .and. depth_kk .lt. depth_time_window) then
-                         cov_factor_t = comp_cov_factor(diff_hours, 24.0)
-                      else
-                         cov_factor_t = comp_cov_factor(diff_hours, window_hours)
+                      cov_factor_t = comp_cov_factor(diff_hours, window_hours)
+                      if (abs(obs_loc%lat)<lat_eq .and. depth_kk<depth_eq) then
+                        if ((Prof%inst_type.eq.ODA_PFL .or. Prof%inst_type.eq.ODA_XBT) .and. window_hours>24.0) then
+                          cov_factor_t = comp_cov_factor(diff_hours, 24.0)
+                        endif
+                        if (dist>200.0e3) then
+                          cov_factor_h = comp_cov_factor(200.0e3, dist0)*cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
+                        endif
                       endif
                       do j_ens=1, ens_size
                          v2_h = 0.0

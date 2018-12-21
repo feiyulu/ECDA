@@ -39,8 +39,10 @@ module eakf_oda_mod
   real, allocatable, dimension(:) :: enso_salt, obs_inc_eakf_salt, obs_inc_oi_salt
   integer, allocatable, dimension(:) :: lon1d, lat1d
   integer, allocatable, dimension(:) :: kd_ind
-  integer, allocatable, dimension(:) :: random_seq
+  !integer, allocatable, dimension(:) :: random_seq
+  integer, allocatable, dimension(:) :: dist_seq
   real, allocatable, dimension(:) :: kd_dist
+  real, allocatable, dimension(:) :: dist_sorted
 
   public ensemble_filter
 
@@ -272,20 +274,22 @@ contains
        obs_loc%lon = Prof%lon
        obs_loc%lat = Prof%lat
 
-       if ( obs_loc%lat < 65.0 ) then
+       if ( abs(obs_loc%lat) < 60.0 ) then
           dist0 = Prof%loc_dist*cos(obs_loc%lat*DEG_TO_RAD)
        else
-          dist0 = Prof%loc_dist*cos(65.0*DEG_TO_RAD)
+          dist0 = Prof%loc_dist*cos(60.0*DEG_TO_RAD)
        end if
        call kd_search_radius(kdroot, obs_loc%lon, obs_loc%lat, &
                2*dist0, kd_ind, kd_dist, kd_num, .true.)
 
-       random_seq = 0
-       call rperm(kd_num, random_seq(1:kd_num))
+       !random_seq = 0
+       !call rperm(kd_num, random_seq(1:kd_num))
+       dist_sorted(1:kd_num) = kd_dist(1:kd_num)
+       call hpsort_eps_epw (kd_num, dist_sorted(1:kd_num), dist_seq(1:kd_num))
 
        doloop_8: do k=1, kd_num ! (8)
-          ii_ens = lon1d(kd_ind(random_seq(k)))
-          jj_ens = lat1d(kd_ind(random_seq(k)))
+          ii_ens = lon1d(kd_ind(dist_seq(k)))
+          jj_ens = lat1d(kd_ind(dist_seq(k)))
           i_h = (jj_ens-jsd)*(ied-isd+1)+ii_ens-isd+1
 
           model_loc%lon = oda_grid%x(ii_ens, jj_ens)
@@ -323,7 +327,8 @@ contains
                   !(model_loc%lon > 25.0 .and. model_loc%lon < 100.0) ) assim_flag = .false.
 
           ifblock_6: if ( assim_flag ) then ! (6)
-             dist = kd_dist(random_seq(k))
+             dist = kd_dist(dist_seq(k))
+             write(10000+pe(),*) "Dist:",dist
              cov_factor_h = comp_cov_factor(dist, dist0) * &
                      cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
 
@@ -591,7 +596,9 @@ contains
        allocate(obs_inc_oi_salt(ens_size), STAT=istat);         obs_inc_oi_salt = 0.0
        allocate(lon1d(blk), lat1d(blk) )
        allocate(kd_ind(blk) )
-       allocate(random_seq(blk) )
+       !allocate(random_seq(blk) )
+       allocate(dist_seq(blk) )
+       allocate(dist_sorted(blk))
        allocate(kd_dist(blk) )
     end if
 
@@ -679,5 +686,113 @@ contains
     return
 
   end subroutine rperm
+
+  subroutine hpsort_eps_epw (n, ra, ind)
+    implicit none  
+    !-input/output variables
+    integer, intent(in)   :: n  
+    integer :: ind (n)  
+    real :: ra (n)
+    !-local variables
+    integer :: i, ir, j, l, iind  
+    real :: rra  
+  !
+    ! initialize index array
+    IF (ind (1) .eq.0) then  
+       DO i = 1, n  
+          ind (i) = i  
+       ENDDO
+    ENDIF
+    ! nothing to order
+    IF (n.lt.2) return  
+    ! initialize indices for hiring and retirement-promotion phase
+    l = n / 2 + 1  
+  
+    ir = n  
+  
+    sorting: do 
+    
+      ! still in hiring phase
+      IF ( l .gt. 1 ) then  
+         l    = l - 1  
+         rra  = ra (l)  
+         iind = ind (l)  
+         ! in retirement-promotion phase.
+      ELSE  
+         ! clear a space at the end of the array
+         rra  = ra (ir)  
+         !
+         iind = ind (ir)  
+         ! retire the top of the heap into it
+         ra (ir) = ra (1)  
+         !
+         ind (ir) = ind (1)  
+         ! decrease the size of the corporation
+         ir = ir - 1  
+         ! done with the last promotion
+         IF ( ir .eq. 1 ) then  
+            ! the least competent worker at all !
+            ra (1)  = rra  
+            !
+            ind (1) = iind  
+            exit sorting  
+         ENDIF
+      ENDIF
+      ! wheter in hiring or promotion phase, we
+      i = l  
+      ! set up to place rra in its proper level
+      j = l + l  
+      !
+      DO while ( j .le. ir )  
+         IF ( j .lt. ir ) then  
+            ! compare to better underling
+            IF ( hslt( ra (j),  ra (j + 1) ) ) then  
+               j = j + 1  
+            !else if ( .not. hslt( ra (j+1),  ra (j) ) ) then
+               ! this means ra(j) == ra(j+1) within tolerance
+             !  if (ind (j) .lt.ind (j + 1) ) j = j + 1
+            ENDIF
+         ENDIF
+         ! demote rra
+         IF ( hslt( rra, ra (j) ) ) then  
+            ra (i) = ra (j)  
+            ind (i) = ind (j)  
+            i = j  
+            j = j + j  
+         !else if ( .not. hslt ( ra(j) , rra ) ) then
+            !this means rra == ra(j) within tolerance
+            ! demote rra
+           ! if (iind.lt.ind (j) ) then
+           !    ra (i) = ra (j)
+           !    ind (i) = ind (j)
+           !    i = j
+           !    j = j + j
+           ! else
+               ! set j to terminate do-while loop
+           !    j = ir + 1
+           ! endif
+            ! this is the right place for rra
+         ELSE
+            ! set j to terminate do-while loop
+            j = ir + 1  
+         ENDIF
+      ENDDO
+      ra (i) = rra  
+      ind (i) = iind  
+  
+    END DO sorting    
+  end subroutine hpsort_eps_epw
+
+  !  internal function 
+  !  compare two real number and return the result
+
+  logical function hslt( a, b )
+    REAL :: a, b
+    IF( abs(a-b) <  10e-4 ) then
+      hslt = .false.
+    ELSE
+      hslt = ( a < b )
+    end if
+  end function hslt
 
 end module eakf_oda_mod

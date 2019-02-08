@@ -285,6 +285,7 @@ contains
        !random_seq = 0
        !call rperm(kd_num, random_seq(1:kd_num))
        dist_sorted(1:kd_num) = kd_dist(1:kd_num)
+       dist_seq = 0
        call hpsort_eps_epw (kd_num, dist_sorted(1:kd_num), dist_seq(1:kd_num))
 
        doloop_8: do k=1, kd_num ! (8)
@@ -328,7 +329,6 @@ contains
 
           ifblock_6: if ( assim_flag ) then ! (6)
              dist = kd_dist(dist_seq(k))
-             write(10000+pe(),*) "Dist:",dist
              cov_factor_h = comp_cov_factor(dist, dist0) * &
                      cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
 
@@ -597,7 +597,7 @@ contains
        allocate(lon1d(blk), lat1d(blk) )
        allocate(kd_ind(blk) )
        !allocate(random_seq(blk) )
-       allocate(dist_seq(blk) )
+       allocate(dist_seq(blk))
        allocate(dist_sorted(blk))
        allocate(kd_dist(blk) )
     end if
@@ -688,11 +688,10 @@ contains
   end subroutine rperm
 
   subroutine hpsort_eps_epw (n, ra, ind)
-    implicit none  
     !-input/output variables
     integer, intent(in)   :: n  
-    integer :: ind (n)  
-    real :: ra (n)
+    integer, dimension(:) :: ind
+    real, dimension(:) :: ra
     !-local variables
     integer :: i, ir, j, l, iind  
     real :: rra  

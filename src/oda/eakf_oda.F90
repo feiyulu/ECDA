@@ -263,6 +263,7 @@ contains
     Prof => Profiles
     doloop_9: do while (associated(Prof)) ! (9)
        k0 = Prof%levels
+       depth_bot = Prof%depth(k0)
        if ( Prof%variable == TEMP_ID ) outlier_limit=temp_limit
        if ( Prof%variable == SALT_ID ) outlier_limit=salt_limit
 
@@ -285,50 +286,60 @@ contains
        dist_seq = 0
        call hpsort_eps_epw (kd_num, dist_sorted(1:kd_num), dist_seq(1:kd_num))
 
-       doloop_8: do k=1, kd_num ! (8)
-          ii_ens = lon1d(kd_ind(dist_seq(k)))
-          jj_ens = lat1d(kd_ind(dist_seq(k)))
-          i_h = (jj_ens-jsd)*(ied-isd+1)+ii_ens-isd+1
+       doloop_4: do kk = 1, k0 ! (4)
+          if ( Prof%flag(kk) ) then ! add each level flag
+             depth_kk = Prof%depth(kk)
+             obs_sigma = Prof%obs_error*exp(-Prof%depth(kk)/e_flder_oer)
+             obs_value = Prof%data(kk)
+             obs_var = obs_sigma * obs_sigma
+             
+             kk0 = FLOOR(Prof%k_index(kk))
+             kk1 = kk0 - 2 * Prof%impact_levels +1
+             kk2 = kk0 + 2 * Prof%impact_levels
+             if(Prof%inst_type .eq. ODA_PFL .and. kk.eq.k0 .AND. depth_bot.gt.1500.0) kk2 = nk
+             if(kk1 < 1) kk1 = 1
+             if(kk2 > nk) kk2 = nk
 
-          model_loc%lon = oda_grid%x(ii_ens, jj_ens)
-          model_loc%lat = oda_grid%y(ii_ens, jj_ens)
+             doloop_8: do k=1, kd_num ! (8)
+                ii_ens = lon1d(kd_ind(dist_seq(k)))
+                jj_ens = lat1d(kd_ind(dist_seq(k)))
+                i_h = (jj_ens-jsd)*(ied-isd+1)+ii_ens-isd+1
 
-          assim_flag = .false.
+                model_loc%lon = oda_grid%x(ii_ens, jj_ens)
+                model_loc%lat = oda_grid%y(ii_ens, jj_ens)
+
+                assim_flag = .false.
           
-          model_basin = oda_grid%basin_mask(ii_ens, jj_ens)
-          if(Prof%basin_mask .eq. 1) then ! Southern ocean
-             if(model_basin == 1 .or. model_basin == 2 .or. &
-                     model_basin == 3 .or. model_basin == 5) assim_flag = .true.
-          elseif(Prof%basin_mask .eq. 2) then ! Atlantic
-             if(model_basin == 2 .or. model_basin == 1 .or. model_basin == 4) assim_flag = .true.
-          elseif(Prof%basin_mask .eq. 3) then ! Pacific
-             if(model_basin == 3 .or. model_basin == 1) assim_flag = .true.
-          elseif(Prof%basin_mask .eq. 4) then ! Arctic
-             if(model_basin == 4 .or. model_basin == 2) assim_flag = .true.
-          elseif(Prof%basin_mask .eq. 5) then ! Indian
-             if(model_basin == 5 .or. model_basin == 1) assim_flag = .true.
-          elseif(Prof%basin_mask .eq. 6) then ! Mediterranean
-             if(model_basin == 6) assim_flag = .true.
-          end if
+                model_basin = oda_grid%basin_mask(ii_ens, jj_ens)
+                if(Prof%basin_mask .eq. 1) then ! Southern ocean
+                   if(model_basin == 1 .or. model_basin == 2 .or. &
+                           model_basin == 3 .or. model_basin == 5) assim_flag = .true.
+                elseif(Prof%basin_mask .eq. 2) then ! Atlantic
+                   if(model_basin == 2 .or. model_basin == 1 .or. model_basin == 4) assim_flag = .true.
+                elseif(Prof%basin_mask .eq. 3) then ! Pacific
+                   if(model_basin == 3 .or. model_basin == 1) assim_flag = .true.
+                elseif(Prof%basin_mask .eq. 4) then ! Arctic
+                   if(model_basin == 4 .or. model_basin == 2) assim_flag = .true.
+                elseif(Prof%basin_mask .eq. 5) then ! Indian
+                   if(model_basin == 5 .or. model_basin == 1) assim_flag = .true.
+                elseif(Prof%basin_mask .eq. 6) then ! Mediterranean
+                   if(model_basin == 6) assim_flag = .true.
+                end if
 
-          ifblock_6: if ( assim_flag ) then ! (6)
-             dist = kd_dist(dist_seq(k))
-             cov_factor_h = comp_cov_factor(dist, dist0) * &
-                     cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
-
-             depth_bot = Prof%depth(k0)
-             doloop_4: do kk = 1, k0 ! (4)
-                if ( Prof%flag(kk) ) then ! add each level flag
-                   depth_kk = Prof%depth(kk)
+                ifblock_6: if ( assim_flag ) then ! (6)
+                   dist = kd_dist(dist_seq(k))
+                   cov_factor_h = comp_cov_factor(dist, dist0)*cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
                    cov_factor_t = comp_cov_factor(diff_hours, window_hours)
-                   if (abs(obs_loc%lat)<lat_eq .and. depth_kk<depth_eq) then
-                     if ((Prof%inst_type.eq.ODA_PFL .or. Prof%inst_type.eq.ODA_XBT) .and. window_hours>24.0) then
-                       cov_factor_t = comp_cov_factor(diff_hours, 24.0)
-                     endif
-                     if (dist>200.0e3) then
-                       cov_factor_h = comp_cov_factor(200.0e3, dist0)*cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
-                     endif
-                   endif
+
+                   !if (abs(obs_loc%lat)<lat_eq .and. depth_kk<depth_eq) then
+                     !if ((Prof%inst_type.eq.ODA_PFL .or. Prof%inst_type.eq.ODA_XBT) .and. window_hours>24.0) then
+                       !cov_factor_t = comp_cov_factor(diff_hours, 24.0)
+                     !endif
+                     !if (dist>200.0e3) then
+                       !cov_factor_h = comp_cov_factor(200.0e3, dist0)*cos((model_loc%lat-obs_loc%lat)*DEG_TO_RAD)
+                     !endif
+                   !endif
+                   
                    do j_ens=1, ens_size
                       v2_h = 0.0
                       v2_l = 0.0
@@ -356,9 +367,6 @@ contains
                       end if
                    end do
 
-                   obs_sigma = Prof%obs_error*exp(-Prof%depth(kk)/e_flder_oer)
-                   obs_value = Prof%data(kk)
-                   obs_var = obs_sigma * obs_sigma
                    if ( Prof%variable == TEMP_ID ) then
                       inc_temp = 0.0
                       call obs_increment(enso_temp, ens_size, obs_value, obs_var, inc_temp, obs_dist)
@@ -372,13 +380,6 @@ contains
                    if (outlier_qc .and. obs_dist>outlier_limit) then
                       !print *,"outlier obs, var ratio=",obs_dist
                    else
-                      kk0 = FLOOR(Prof%k_index(kk))
-                      kk1 = kk0 - 2 * Prof%impact_levels +1
-                      kk2 = kk0 + 2 * Prof%impact_levels
-                      if(Prof%inst_type .eq. ODA_PFL .and. kk.eq.k0 .AND. depth_bot.gt.1500.0) kk2 = nk
-                      if(kk1 < 1) kk1 = 1
-                      if(kk2 > nk) kk2 = nk
-
                       doloop_3: do kk_ens=kk1, kk2 ! (3)
                          t_tau   = (kk_ens-1)*blk + i_h
                          s_tau   = salt_offset + t_tau
@@ -482,10 +483,10 @@ contains
                          end if ifblock_1 ! only use obs which has cov_factor > 0.0 (1)
                       end do doloop_3 ! finish adjustments for related model levels (3)
                    end if ! obs_dist
-                end if ! add each level flag
-             end do doloop_4 ! go through one profile column (4)
-          end if ifblock_6 ! get rid of land points (6)
-       end do doloop_8 ! finish the adjustments for all related model columns (8)
+                end if ifblock_6 ! get rid of land points (6)
+             end do doloop_8 ! finish the adjustments for all related model columns (8)
+          end if ! add each level flag
+       end do doloop_4 ! go through one profile column (4)
        Prof => Prof%cnext
     end do doloop_9 ! finish all profiles (9)
 

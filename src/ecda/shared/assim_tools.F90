@@ -64,6 +64,7 @@ contains
     integer :: ie
 
     mean = sum(ens) / ens_size
+    obs_dist = abs(obs-mean)
     cov = 0.0
 
     do ie=1, ens_size
@@ -71,14 +72,14 @@ contains
     end do
     cov = cov / (ens_size-1)
 
-    if ( cov == 0.0 ) return
-    obs_dist = abs(obs-mean)
-
-    new_cov = (cov *obs_var)/(cov + obs_var)
-    new_mean = new_cov * (obs_var*mean + cov*obs)/(cov*obs_var)
-    a = sqrt(new_cov/cov)
-    obs_inc = a * (ens - mean) + new_mean - ens
-
+    if ( cov < 1.0e-10 ) then
+       obs_inc = 0.0
+    else
+       new_cov = (cov *obs_var)/(cov + obs_var)
+       new_mean = new_cov * (obs_var*mean + cov*obs)/(cov*obs_var)
+       a = sqrt(new_cov/cov)
+       obs_inc = a * (ens - mean) + new_mean - ens
+    endif
   end subroutine obs_increment
 
   subroutine update_from_inc(obs, obs_inc, state, ens_size, new_state, cov_factor, assim_var)
@@ -122,8 +123,6 @@ contains
        std_g = 0.0
        cr = 0.0
     end if
-
-    new_state = 0.0
 
     if ( abs(cr) >= cor_cut ) then
        new_state = (cov_factor * cv / cv_o) * obs_inc

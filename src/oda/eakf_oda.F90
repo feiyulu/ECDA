@@ -89,7 +89,6 @@ contains
     integer :: isg, ieg, jsg, jeg
     integer :: halox, haloy
 
-    real :: cor_oi = 0.0
     real :: cov_factor, cov_factor_v, cov_factor_t, cov_factor_h
 
     logical :: assim_flag, interp_flag
@@ -108,11 +107,6 @@ contains
 
     !---------------------------------------------------------------------------
     real :: obs_value, obs_sigma, obs_var
-    real :: obs_var_t_oi = 0.0
-    real :: obs_var_s_oi = 0.0
-    real :: std_bg = 0.0
-    real :: std_oi_o = 0.0
-    real :: std_oi_g = 0.0
     real :: dist, dist0
     real :: v2_h, v2_l
     real :: depth_bot, depth_kk
@@ -397,7 +391,7 @@ contains
                                ! using temperature adjusts temperature and salinity
                                ! temperature itself
                                assim_var = 1
-                               ens_inc(:) = 0.0
+                               ens_inc = 0.0
                                call update_from_inc(enso_temp, inc_temp, ens(t_tau, :), ens_size, ens_inc, cov_factor, assim_var)
                                ens(t_tau, :) = ens(t_tau, :) + ens_inc(:)
 
@@ -418,7 +412,7 @@ contains
                                ! temperature impact salinity
                                ifblock_0_50: if ( Prof%temp_to_salt .and. ens_mean(s_tau) /= 0.0) then ! (0.5)
                                   assim_var = 2
-                                  ens_inc(:) = 0.0
+                                  ens_inc = 0.0
                                   call update_from_inc(enso_temp, inc_temp, ens(s_tau, :), ens_size, ens_inc, cov_factor, assim_var)
                                   ens(s_tau, :) = ens(s_tau, :) + ens_inc(:)
 
@@ -440,7 +434,7 @@ contains
                             
                             elseif ( Prof%variable == SALT_ID .and. ens_mean(s_tau) /= 0.0) then ! (0.60)
                                assim_var = 1
-                               ens_inc(:) = 0.0
+                               ens_inc = 0.0
                                call update_from_inc(enso_salt, inc_salt, ens(s_tau, :), ens_size, ens_inc, cov_factor, assim_var)
                                ens(s_tau, :) = ens(s_tau, :) + ens_inc(:)
 
@@ -461,7 +455,7 @@ contains
                                ! salinity impact temperature
                                ifblock_0_5: if ( Prof%salt_to_temp .and. ens_mean(t_tau) /= 0.0) then ! (0.5)
                                   assim_var = 2
-                                  ens_inc(:) = 0.0
+                                  ens_inc = 0.0
                                   call update_from_inc(enso_salt, inc_salt, ens(t_tau, :), ens_size, ens_inc, cov_factor, assim_var)
                                   ens(t_tau, :) = ens(t_tau, :) + ens_inc(:)
 

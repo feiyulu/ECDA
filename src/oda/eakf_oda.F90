@@ -9,7 +9,7 @@ module eakf_oda_mod
   use fms_mod, only : open_namelist_file, check_nml_error, close_file
   use fms_mod, only : stdout, error_mesg, FATAL, WARNING
   use mpp_mod, only : mpp_sync_self, pe=>mpp_pe, npes=>mpp_npes
-  use mpp_mod, only : mpp_clock_id, mpp_clock_begin, mpp_clock_end, mpp_root_pe
+  use mpp_mod, only : mpp_root_pe
   use time_manager_mod, only : time_type, get_time
   use constants_mod, only : DEG_TO_RAD, RADIUS
   use mpp_domains_mod, only : mpp_get_data_domain, mpp_get_compute_domain, mpp_get_global_domain
@@ -129,11 +129,6 @@ contains
     ens_size = Prior%ensemble_size
     ndim = size(shape(Prior%T))
     nk = size(Prior%T, ndim-1)
-
-    !---------------------------------------------------------------------------
-
-    id_eakf_total = mpp_clock_id('(ODA filter computation)')
-    call mpp_clock_begin(id_eakf_total)
 
     call mpp_get_compute_domain(Domain, isc, iec, jsc, jec)
     call mpp_get_data_domain(Domain, isd, ied, jsd, jed)
@@ -543,7 +538,6 @@ contains
 
     first_run_call = .false.
 
-    call mpp_clock_end(id_eakf_total)
   end subroutine ensemble_filter
 
 

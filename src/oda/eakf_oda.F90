@@ -62,11 +62,13 @@ contains
     real :: lat_eq = 20.0
     logical :: debug_eakf = .false.
     logical :: outlier_qc = .true.
+    logical :: get_obs_forecast = .false.
+    logical :: get_obs_analysis = .false.
     real :: temp_limit = 5.0
     real :: salt_limit = 2.0
 
-    namelist /eakf_nml/ e_flder_oer, depth_eq, lat_eq, &
-            debug_eakf, outlier_qc, temp_limit, salt_limit
+    namelist /eakf_nml/ e_flder_oer, depth_eq, lat_eq, debug_eakf, outlier_qc, &
+            get_obs_forecast, get_obs_analysis, temp_limit, salt_limit
 
     !--- module name and version number ----
     !character(len=*), parameter :: module_name = 'eakf'
@@ -107,6 +109,7 @@ contains
     real :: diff_hours, diff_k, window_hours
 
     !---------------------------------------------------------------------------
+    real :: forecast_t, forecast_s, analysis_t, analysis_s
     real :: obs_value, obs_sigma, obs_var
     real :: dist, dist0
     real :: v2_h, v2_l
@@ -211,13 +214,14 @@ contains
        write (UNIT=stdout_unit, FMT='("PE ",I5,": start profile loop")') pe()
     end if
 
-    Prof => Profiles
-    do while (associated(Prof))
-       k0 = Prof%levels
-       if(.not. associated(Prof%forecast)) allocate(Prof%forecast(k0))
-       do kk = 1, k0
-          Prof%forecast(kk) = missing_value
-          if ( Prof%flag(kk) ) then ! add each level flag
+    if ( get_obs_forecast ) then
+       Prof => Profiles
+       do while (associated(Prof))
+          k0 = Prof%levels
+          if(.not. associated(Prof%forecast)) allocate(Prof%forecast(k0))
+          do kk = 1, k0
+             Prof%forecast(kk) = missing_value
+             depth_kk = Prof%depth(kk)
              interp_flag = .true.
              v2_h = 0.0
              v2_l = 0.0
@@ -227,28 +231,39 @@ contains
                    ind_temp_l = Prof%obs_def(kk)%state_var_index(i_idx+4)
                    v2_h = v2_h + ens_mean(ind_temp_h)*Prof%obs_def(kk)%coef(i_idx)
                    v2_l = v2_l + ens_mean(ind_temp_l)*Prof%obs_def(kk)%coef(i_idx)
-                   if(ens_mean(ind_temp_h) .eq. 0.0 .or. ens_mean(ind_temp_l) .eq. 0.0) &
-                           interp_flag = .false.
+                   if(ens_mean(ind_temp_h).eq.0.0 .or. ens_mean(ind_temp_l).eq.0.0) then
+                      interp_flag = .false.
+                   end if
                 end do
-             elseif ( Prof%variable == SALT_ID ) then
+                forecast_t = v2_h*Prof%obs_def(kk)%coef(5) + v2_l*Prof%obs_def(kk)%coef(6)
+             end if
+             v2_h = 0.0
+             v2_l = 0.0
+             if ( Prof%variable == SALT_ID .or. Prof%variable == TEMP_ID ) then
                 do i_idx=1, 4
                    ind_salt_h = Prof%obs_def(kk)%state_var_index(i_idx)+salt_offset
                    ind_salt_l = Prof%obs_def(kk)%state_var_index(i_idx+4)+salt_offset
                    v2_h = v2_h + ens_mean(ind_salt_h)*Prof%obs_def(kk)%coef(i_idx)
                    v2_l = v2_l + ens_mean(ind_salt_l)*Prof%obs_def(kk)%coef(i_idx)
-                   if(ens_mean(ind_salt_h) .eq. 0.0 .or. ens_mean(ind_salt_l) .eq. 0.0) &
-                           interp_flag = .false.
+                   if(ens_mean(ind_salt_h).eq.0.0 .or. ens_mean(ind_salt_l).eq.0.0) then
+                      interp_flag = .false.
+                   end if
                 end do
+                forecast_s = v2_h*Prof%obs_def(kk)%coef(5) + v2_l*Prof%obs_def(kk)%coef(6)
              end if
              if(interp_flag) then
-                Prof%forecast(kk) = v2_h*Prof%obs_def(kk)%coef(5) + v2_l*Prof%obs_def(kk)%coef(6)
+                if ( Prof%variable == TEMP_ID ) then
+                   Prof%forecast(kk) = gsw_pt_from_t(forecast_s,forecast_t,0.0,depth_kk)
+                elseif ( Prof%variable == SALT_ID ) then
+                   Prof%forecast(kk) = forecast_s
+                end if
              else
                 Prof%flag(kk) = .false.
              endif
-          end if
+          end do
+          Prof => Prof%cnext
        end do
-       Prof => Prof%cnext
-    end do
+    end if
 
     Prof => Profiles
     doloop_9: do while (associated(Prof)) ! (9)
@@ -357,11 +372,10 @@ contains
                       end if
                    end do
 
-                   do j_ens=1, ens_size
-                      enso_temp(j_ens) = gsw_pt_from_t(enso_salt(j_ens),enso_theta(j_ens),0.0,depth_kk)
-                   end do
-
                    if ( Prof%variable == TEMP_ID ) then
+                      do j_ens=1, ens_size
+                         enso_temp(j_ens) = gsw_pt_from_t(enso_salt(j_ens),enso_theta(j_ens),0.0,depth_kk)
+                      end do
                       inc_temp = 0.0
                       call obs_increment(enso_temp, ens_size, obs_value, obs_var, inc_temp, obs_dist)
                    elseif ( Prof%variable == SALT_ID ) then
@@ -499,13 +513,15 @@ contains
     enddo
    
     ens_mean = sum(ens, dim=2) / ens_size
-    Prof => Profiles
-    do while (associated(Prof))
-       k0 = Prof%levels
-       if(.not. associated(Prof%analysis)) allocate(Prof%analysis(k0))
-       do kk = 1, k0
-          Prof%analysis(kk) = missing_value
-          if ( Prof%flag(kk) ) then ! add each level flag
+    if ( get_obs_analysis ) then
+       Prof => Profiles
+       do while (associated(Prof))
+          k0 = Prof%levels
+          if(.not. associated(Prof%analysis)) allocate(Prof%analysis(k0))
+          do kk = 1, k0
+             Prof%analysis(kk) = missing_value
+             depth_kk = Prof%depth(kk)
+             interp_flag = .true.
              v2_h = 0.0
              v2_l = 0.0
              if ( Prof%variable == TEMP_ID ) then
@@ -514,20 +530,38 @@ contains
                    ind_temp_l = Prof%obs_def(kk)%state_var_index(i_idx+4)
                    v2_h = v2_h + ens_mean(ind_temp_h)*Prof%obs_def(kk)%coef(i_idx)
                    v2_l = v2_l + ens_mean(ind_temp_l)*Prof%obs_def(kk)%coef(i_idx)
+                   if(ens_mean(ind_temp_h).eq.0.0 .or. ens_mean(ind_temp_l).eq.0.0) then
+                      interp_flag = .false.
+                   end if
                 end do
-             elseif ( Prof%variable == SALT_ID ) then
+                analysis_t = v2_h*Prof%obs_def(kk)%coef(5) + v2_l*Prof%obs_def(kk)%coef(6)
+             end if
+             v2_h = 0.0
+             v2_l = 0.0
+             if ( Prof%variable == SALT_ID .or. Prof%variable == TEMP_ID ) then
                 do i_idx=1, 4
                    ind_salt_h = Prof%obs_def(kk)%state_var_index(i_idx)+salt_offset
                    ind_salt_l = Prof%obs_def(kk)%state_var_index(i_idx+4)+salt_offset
                    v2_h = v2_h + ens_mean(ind_salt_h)*Prof%obs_def(kk)%coef(i_idx)
                    v2_l = v2_l + ens_mean(ind_salt_l)*Prof%obs_def(kk)%coef(i_idx)
+                   if(ens_mean(ind_salt_h).eq.0.0 .or. ens_mean(ind_salt_l).eq.0.0) then
+                      interp_flag = .false.
+                   end if
                 end do
+                analysis_s = v2_h*Prof%obs_def(kk)%coef(5) + v2_l*Prof%obs_def(kk)%coef(6)
              end if
-             Prof%analysis(kk) = v2_h*Prof%obs_def(kk)%coef(5) + v2_l*Prof%obs_def(kk)%coef(6)
-         end if
+             if(interp_flag) then
+                if ( Prof%variable == TEMP_ID ) then
+                   Prof%analysis(kk) = gsw_pt_from_t(analysis_s,analysis_t,0.0,depth_kk)
+                elseif ( Prof%variable == SALT_ID ) then
+                   Prof%analysis(kk) = analysis_s
+                end if
+             endif
+          end do
+          Prof => Prof%cnext
        end do
-       Prof => Prof%cnext
-    end do
+    end if
+
 
     if ( debug_eakf ) then
        write (UNIT=stdout_unit, FMT='("PE ",I5,": finished red_ens")') pe()

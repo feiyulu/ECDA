@@ -62,13 +62,16 @@ contains
     real :: lat_eq = 20.0
     logical :: debug_eakf = .false.
     logical :: outlier_qc = .true.
-    logical :: get_obs_forecast = .false.
+    logical :: get_obs_forecast = .true.
     logical :: get_obs_analysis = .false.
+    real :: sst_ice_limit = -2.0
+    real :: obs_ice_limit = -2.0
     real :: temp_limit = 5.0
     real :: salt_limit = 2.0
 
     namelist /eakf_nml/ e_flder_oer, depth_eq, lat_eq, debug_eakf, outlier_qc, &
-            get_obs_forecast, get_obs_analysis, temp_limit, salt_limit
+            get_obs_forecast, get_obs_analysis, sst_ice_limit, obs_ice_limit, &
+            temp_limit, salt_limit
 
     !--- module name and version number ----
     !character(len=*), parameter :: module_name = 'eakf'
@@ -254,6 +257,10 @@ contains
              if(interp_flag) then
                 if ( Prof%variable == TEMP_ID ) then
                    Prof%forecast(kk) = gsw_pt_from_t(forecast_s,forecast_t,0.0,depth_kk)
+                   if (Prof%inst_type == ODA_OISST) then
+                      if ( Prof%forecast(kk) < sst_ice_limit) Prof%flag(kk) = .false.
+                      if ( Prof%data(kk) < obs_ice_limit) Prof%flag(kk) = .false.
+                   endif
                 elseif ( Prof%variable == SALT_ID ) then
                    Prof%forecast(kk) = forecast_s
                 end if

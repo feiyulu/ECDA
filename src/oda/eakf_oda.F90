@@ -286,10 +286,10 @@ contains
        obs_loc%lon = Prof%lon
        obs_loc%lat = Prof%lat
 
-       if ( obs_loc%lat < 60.0 .and. obs_loc%lat > -70.0 ) then
+       if ( obs_loc%lat < 60.0 .and. obs_loc%lat > -60.0 ) then
           dist0 = Prof%loc_dist*cos(obs_loc%lat*DEG_TO_RAD)
-       else if ( obs_loc%lat <= -70.0 ) then
-          dist0 = Prof%loc_dist*cos(70.0*DEG_TO_RAD)
+       else if ( obs_loc%lat <= -60.0 ) then
+          dist0 = Prof%loc_dist*cos(60.0*DEG_TO_RAD)
        else
           dist0 = Prof%loc_dist*cos(60.0*DEG_TO_RAD)
        end if

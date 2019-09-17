@@ -14,7 +14,7 @@ module eakf_oda_mod
   use constants_mod, only : DEG_TO_RAD, RADIUS
   use mpp_domains_mod, only : mpp_get_data_domain, mpp_get_compute_domain, mpp_get_global_domain
   use mpp_domains_mod, only : domain2d, mpp_update_domains
-  use gsw_mod_toolbox, only : gsw_pt_from_t
+  use gsw_mod_toolbox, only : gsw_pt_from_t, gsw_t_freezing_poly
 
   ! ODA Modules
   use ocean_da_types_mod, only : ocean_profile_type, TEMP_ID, SALT_ID, missing_value
@@ -113,7 +113,7 @@ contains
 
     !---------------------------------------------------------------------------
     real :: forecast_t, forecast_s, analysis_t, analysis_s
-    real :: obs_value, obs_sigma, obs_var
+    real :: obs_value, obs_sigma, obs_var, ensmean_salt
     real :: dist, dist0
     real :: v2_h, v2_l
     real :: depth_bot, depth_kk
@@ -386,6 +386,12 @@ contains
                          enso_temp(j_ens) = gsw_pt_from_t(enso_salt(j_ens),enso_theta(j_ens),0.0,depth_kk)
                       end do
                       inc_temp = 0.0
+
+                      if (Prof%inst_type.eq.ODA_OISST .and. obs_value<-1.79) then
+                        ensmean_salt = sum(enso_salt)/ens_size
+                        obs_value=gsw_t_freezing_poly(ensmean_salt, 0.0, polynomial=.True.)
+                      endif
+
                       call obs_increment(enso_temp, ens_size, obs_value, obs_var, inc_temp, obs_dist)
                    elseif ( Prof%variable == SALT_ID ) then
                       inc_salt = 0.0

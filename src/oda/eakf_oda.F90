@@ -9,7 +9,7 @@ module eakf_oda_mod
   use fms_mod, only : open_namelist_file, check_nml_error, close_file
   use fms_mod, only : stdout, error_mesg, FATAL, WARNING
   use mpp_mod, only : mpp_sync_self, pe=>mpp_pe, npes=>mpp_npes
-  use mpp_mod, only : mpp_root_pe
+  use mpp_mod, only : mpp_root_pe, input_nml_file
   use time_manager_mod, only : time_type, get_time
   use constants_mod, only : DEG_TO_RAD, RADIUS
   use mpp_domains_mod, only : mpp_get_data_domain, mpp_get_compute_domain, mpp_get_global_domain
@@ -44,6 +44,23 @@ module eakf_oda_mod
   real, allocatable, dimension(:) :: kd_dist
   real, allocatable, dimension(:) :: dist_sorted
 
+  !---- namelist with default values
+  real :: e_flder_oer = 2000.0
+  real :: depth_eq = 200.0
+  real :: lat_eq = 20.0
+  logical :: debug_eakf = .false.
+  logical :: outlier_qc = .true.
+  logical :: get_obs_forecast = .true.
+  logical :: get_obs_analysis = .false.
+  real :: sst_ice_limit = -2.0
+  real :: obs_ice_limit = -2.0
+  real :: temp_limit = 5.0
+  real :: salt_limit = 2.0
+
+  namelist /eakf_nml/ e_flder_oer, depth_eq, lat_eq, debug_eakf, outlier_qc, &
+            get_obs_forecast, get_obs_analysis, sst_ice_limit, obs_ice_limit, &
+            temp_limit, salt_limit
+
   public ensemble_filter
 
 contains
@@ -55,23 +72,6 @@ contains
     type(kd_root), pointer, intent(inout) :: kdroot
     type(domain2d), pointer :: Domain
     type(grid_type), pointer, intent(in) :: oda_grid
-
-    !---- namelist with default values
-    real :: e_flder_oer = 2000.0
-    real :: depth_eq = 200.0
-    real :: lat_eq = 20.0
-    logical :: debug_eakf = .false.
-    logical :: outlier_qc = .true.
-    logical :: get_obs_forecast = .true.
-    logical :: get_obs_analysis = .false.
-    real :: sst_ice_limit = -2.0
-    real :: obs_ice_limit = -2.0
-    real :: temp_limit = 5.0
-    real :: salt_limit = 2.0
-
-    namelist /eakf_nml/ e_flder_oer, depth_eq, lat_eq, debug_eakf, outlier_qc, &
-            get_obs_forecast, get_obs_analysis, sst_ice_limit, obs_ice_limit, &
-            temp_limit, salt_limit
 
     !--- module name and version number ----
     !character(len=*), parameter :: module_name = 'eakf'
@@ -147,40 +147,29 @@ contains
     blk = (jed-jsd+1)*(ied-isd+1)
     salt_offset = nk*blk
 
-    ! Read namelist for run time control
-    unit = open_namelist_file()
-    read(unit, nml = eakf_nml, iostat=io)
-    call close_file(unit)
-
-    if ( check_nml_error(io, 'eakf_nml') < 0 ) then
-       if ( pe() == mpp_root_pe() ) then
-          call error_mesg('eakf_mod::ensemble_filter', &
-                  'EAKF_NML not found in input.nml.  Using defaults.', WARNING)
-       end if
-    end if
-
     model_size = blk * nk * 2
     if ( .not. module_initialized ) then
-       call eakf_oda_init(model_size, ens_size, blk)
+      call eakf_oda_init(model_size, ens_size, blk)
     
-       allocate( glon1d(blk), glat1d(blk) )
-       do i = isd, ied; do j = jsd, jed
-         lon1d((j-jsd)*(ied-isd+1)+i-isd+1) = i
-         lat1d((j-jsd)*(ied-isd+1)+i-isd+1) = j
-         glon1d((j-jsd)*(ied-isd+1)+i-isd+1) = oda_grid%x(i,j)
-         glat1d((j-jsd)*(ied-isd+1)+i-isd+1) = oda_grid%y(i,j)
-       enddo; enddo
+      allocate( glon1d(blk), glat1d(blk) )
+      do i = isd, ied; do j = jsd, jed
+        lon1d((j-jsd)*(ied-isd+1)+i-isd+1) = i
+        lat1d((j-jsd)*(ied-isd+1)+i-isd+1) = j
+        glon1d((j-jsd)*(ied-isd+1)+i-isd+1) = oda_grid%x(i,j)
+        glat1d((j-jsd)*(ied-isd+1)+i-isd+1) = oda_grid%y(i,j)
+      enddo; enddo
 
-       if ( .not. associated(kdroot) ) then
-         allocate(kdroot)
-         call kd_init(kdroot, glon1d, glat1d)
-       endif
+      if ( .not. associated(kdroot) ) then
+        allocate(kdroot)
+        call kd_init(kdroot, glon1d, glat1d)
+      endif
 
-       deallocate( glon1d, glat1d )
+      deallocate( glon1d, glat1d )
+
+      ! Initialize assim tools module
+      call assim_tools_init()
+
     end if
-
-    ! Initialize assim tools module
-    call assim_tools_init()
 
     ! print namelist
     if ( pe() == mpp_root_pe() .and. first_run_call ) then
@@ -594,26 +583,40 @@ contains
   subroutine eakf_oda_init(model_size, ens_size, blk)
     integer, intent(in) :: model_size, ens_size, blk
 
-    integer :: istat, j_ens
+    integer :: istat, j_ens, io, ierr, unit
 
     character(len=128) :: emsg_local
 
     if ( module_initialized ) then
        call error_mesg('eakf_oda_mod::eakf_oda_init', 'Module already initialized.', WARNING)
     else
-       allocate(ens(model_size, ens_size), STAT=istat);         ens = 0.0
-       allocate(ens_mean(model_size), STAT=istat);              ens_mean = 0.0
-       allocate(enso_theta(ens_size), STAT=istat);              enso_theta = 0.0
-       allocate(enso_temp(ens_size), STAT=istat);               enso_temp = 0.0
-       allocate(inc_temp(ens_size), STAT=istat);                inc_temp= 0.0
-       allocate(ens_inc(ens_size), STAT=istat);                 ens_inc = 0.0
-       allocate(enso_salt(ens_size), STAT=istat);               enso_salt = 0.0
-       allocate(inc_salt(ens_size), STAT=istat);                inc_salt = 0.0
-       allocate(lon1d(blk), lat1d(blk) )
-       allocate(kd_ind(blk) )
-       allocate(dist_seq(blk))
-       allocate(dist_sorted(blk))
-       allocate(kd_dist(blk) )
+      ! Read namelist for run time control
+      #ifdef INTERNAL_FILE_NML
+        read (input_nml_file, nml=eakf_nml, iostat=io)
+        ierr = check_nml_error(io,"eakf_nml")
+      #else
+        unit = open_namelist_file ()
+        ierr=1
+        do while (ierr /= 0)
+          read(unit,nml=eakf_nml, iostat=io,end=10)
+          ierr = check_nml_error (io,'eakf_nml')
+        enddo
+        10 call close_file(unit)
+      #endif
+
+      allocate(ens(model_size, ens_size), STAT=istat);         ens = 0.0
+      allocate(ens_mean(model_size), STAT=istat);              ens_mean = 0.0
+      allocate(enso_theta(ens_size), STAT=istat);              enso_theta = 0.0
+      allocate(enso_temp(ens_size), STAT=istat);               enso_temp = 0.0
+      allocate(inc_temp(ens_size), STAT=istat);                inc_temp= 0.0
+      allocate(ens_inc(ens_size), STAT=istat);                 ens_inc = 0.0
+      allocate(enso_salt(ens_size), STAT=istat);               enso_salt = 0.0
+      allocate(inc_salt(ens_size), STAT=istat);                inc_salt = 0.0
+      allocate(lon1d(blk), lat1d(blk) )
+      allocate(kd_ind(blk) )
+      allocate(dist_seq(blk))
+      allocate(dist_sorted(blk))
+      allocate(kd_dist(blk) )
     end if
 
     module_initialized = .true.

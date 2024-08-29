@@ -6,10 +6,12 @@ module eakf_oda_mod
   ! Communications are broadcasting the information at the observation location.
 
   ! FMS shared modules
-  use fms_mod, only : open_namelist_file, check_nml_error, close_file
+  USE fms2_io_mod,    ONLY : open_file, close_file
+  use fms_mod, only : check_nml_error
   use fms_mod, only : stdout, error_mesg, FATAL, WARNING
   use mpp_mod, only : mpp_sync_self, pe=>mpp_pe, npes=>mpp_npes
   use mpp_mod, only : mpp_root_pe, input_nml_file
+  USE mpp_mod,        ONLY : input_nml_file
   use time_manager_mod, only : time_type, get_time
   use constants_mod, only : DEG_TO_RAD, RADIUS
   use mpp_domains_mod, only : mpp_get_data_domain, mpp_get_compute_domain, mpp_get_global_domain
@@ -591,18 +593,8 @@ contains
        call error_mesg('eakf_oda_mod::eakf_oda_init', 'Module already initialized.', WARNING)
     else
       ! Read namelist for run time control
-      #ifdef INTERNAL_FILE_NML
-        read (input_nml_file, nml=eakf_nml, iostat=io)
-        ierr = check_nml_error(io,"eakf_nml")
-      #else
-        unit = open_namelist_file ()
-        ierr=1
-        do while (ierr /= 0)
-          read(unit,nml=eakf_nml, iostat=io,end=10)
-          ierr = check_nml_error (io,'eakf_nml')
-        enddo
-        10 call close_file(unit)
-      #endif
+      read (input_nml_file, nml=eakf_nml, iostat=io)
+      ierr = check_nml_error(IOSTAT=io,NML_NAME="EAKF_NML")
 
       allocate(ens(model_size, ens_size), STAT=istat);         ens = 0.0
       allocate(ens_mean(model_size), STAT=istat);              ens_mean = 0.0

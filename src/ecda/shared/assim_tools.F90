@@ -1,9 +1,10 @@
 module assim_tools_mod
   ! A variety of operations required by assimilation.
 
-  use fms_mod, only : file_exist, open_namelist_file, check_nml_error, write_version_number, close_file
+  use fms_mod, only : check_nml_error, write_version_number
   use fms_mod, only : error_mesg, WARNING, FATAL
   use mpp_mod, only : mpp_pe, mpp_root_pe, mpp_clock_id, mpp_clock_begin, mpp_clock_end, stdlog, stdout
+  USE mpp_mod, ONLY: input_nml_file
 
   logical :: first_run_call = .true.
 
@@ -27,16 +28,10 @@ contains
     integer :: unit, istat, stdlog_unit, stdout_unit
 
     ! Read namelist for run time control
-    if ( file_exist('input.nml') ) then
-       unit = open_namelist_file()
-       read(UNIT=unit, NML=assim_tools_nml, IOSTAT=istat)
-       call close_file(unit)
-    else
-       ! Set istat to an arbitrary positive number if input.nml does not exist
-       istat = 100
-    end if
+    read (input_nml_file, nml=assim_tools_nml, iostat=istat)
+    ierr = check_nml_error(IOSTAT=istat,NML_NAME="assim_tools_nml")
 
-    if ( check_nml_error(istat, 'assim_tools_nml') < 0 ) then
+    if ( ierr < 0 ) then 
        call error_mesg('assim_tools_mod::assim_tools_init', 'ASSIM_TOOLS_NML not found in input.nml,  Using defaults.', WARNING)
     end if
 

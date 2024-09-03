@@ -2,14 +2,17 @@ module eakf_tab_mod
 
   ! this module is produced by snz for initializing EAKF
 
+  USE fms2_io_mod,    ONLY : ascii_read
+  USE fms2_io_mod,    ONLY : FmsNetcdfFile_t
+  USE fms2_io_mod,    ONLY : open_file, close_file, read_data
+  USE fms2_io_mod,    ONLY : get_num_variables, get_num_dimensions, variable_exists
+
   use cov_cutoff_mod, only : comp_cov_factor
-  use fms_mod, only : file_exist, open_namelist_file, check_nml_error, close_file
-  use fms_mod, only : write_version_number, error_mesg, WARNING, FATAL
-  use mpp_mod, only : stdlog, mpp_pe, mpp_root_pe
-  use mpp_io_mod, only : mpp_open, mpp_close, mpp_read, axistype, mpp_get_info, fieldtype, mpp_get_atts
-  use mpp_io_mod, only : mpp_get_axes, mpp_get_fields, mpp_get_field_name
-  use mpp_io_mod, only : MPP_ASCII, MPP_RDONLY, MPP_MULTI, MPP_SINGLE, MPP_NETCDF, MPP_OVERWR, MPP_APPEND
-  use constants_mod, only : DEG_TO_RAD
+  use fms_mod,        only : check_nml_error
+  use fms_mod,        only : write_version_number, error_mesg, WARNING, FATAL
+  USE mpp_mod,        ONLY : input_nml_file
+  use mpp_mod,        only : stdlog, mpp_pe, mpp_root_pe
+  use constants_mod,  only : DEG_TO_RAD
 
   implicit none
 
@@ -47,7 +50,7 @@ contains
     real, dimension(41,41,11) :: cor
 
     integer :: i, unit, j, k, k0, j0, j00, l0, l, blk_j0, blk_j1, blk_jk0
-    integer :: istat
+    integer :: ierr, istat
     integer :: stdlog_unit
 
     integer :: nlon, nlat, nlev
@@ -57,8 +60,7 @@ contains
     character(len=80) :: sgm_fname, cor_fname, cor_sta_fname
     character(len=32) :: axisname
 
-    type(axistype), allocatable, dimension(:), target :: axes
-    type(fieldtype), allocatable, dimension(:), target :: fields
+    type(FmsNetcdfFile_t) :: fileobj
 
     !---- namelist with default values
     real :: cutoff = 2000.0e3
@@ -70,16 +72,10 @@ contains
     stdlog_unit = stdlog()
 
     ! Read namelist for run time control
-    if ( file_exist('input.nml') ) then
-       unit = open_namelist_file()
-       read (unit, nml=eakf_tab_nml, iostat=istat)
-       call close_file(unit)
-    else
-       ! Set io to an arbitrary positive number if input.nml does not exist
-       istat = 100
-    end if
+    read (input_nml_file, nml=eakf_tab_nml, iostat=istat)
+    ierr = check_nml_error(IOSTAT=istat,NML_NAME="EAKF_TAB_NML")
 
-    if ( check_nml_error(istat, 'eakf_tab_nml') < 0 ) then
+    if ( ierr < 0 ) then
        if ( mpp_pe() == mpp_root_pe() ) then
           call error_mesg('eakf_tab_mod::eakf_init', 'EAKF_TAB_NML not found in input.nml.  Using defaults.', WARNING)
        end if
@@ -125,25 +121,13 @@ contains
 
     ! read out oi sigma and cor.
     sgm_fname ='STA_COV/sgm.nc'
-    call mpp_open(unit, trim(sgm_fname), MPP_RDONLY,&
-         & MPP_NETCDF, threading=MPP_MULTI, fileset=MPP_SINGLE)
-    call mpp_get_info(unit, ndim, nvar, natt, ntime)
-    allocate(axes(ndim), STAT=istat)
-    if ( istat .ne. 0 ) then
-       call error_mesg('eakf_tab::eakf_init', 'Unable to allocate axes. (sgm.nc)', FATAL)
-    end if
-    call mpp_get_axes(unit, axes)
-    do i=1, ndim
-       call mpp_get_atts(axes(i), name=axisname)
-       select case (trim(axisname))
-       case ('XT_OCEAN')
-          call mpp_get_atts(axes(i), len=nlon)
-       case ('YT_OCEAN')
-          call mpp_get_atts(axes(i), len=nlat)
-       case ('ZT_OCEAN')
-          call mpp_get_atts(axes(i), len=nlev)
-       end select
-    end do
+    if ( open_file(fileobj, trim(sgm_fname), "read", is_restart = .false.)) then 
+       ndim= get_num_dimensions(fileobj)
+       nvar= get_num_variables(fileobj)
+       call get_dimension_size(fileobj,"XT_OCEAN",nlon)
+       call get_dimension_size(fileobj,"YT_OCEAN",nlat)
+       call get_dimension_size(fileobj,"ZT_OCEAN",nlev)
+    endif
 
     if ( nlon /= 360 .or. nlat /= 200 .or. nlev /= 50 ) then
        write (emsg_local, '("nlon(",I4,") .ne. 360 or  nlat(",I4,") .ne. 200 or nlev(",I4,") .ne 50")' ) nlon, nlat, nlev
@@ -180,55 +164,24 @@ contains
        call error_mesg('eakf_tab_mod::eakf_init', 'Unable to allocate sgm_v.', FATAL)
     end if
 
-    allocate(fields(nvar), STAT=istat)
-    if ( istat .ne. 0 ) then
-       call error_mesg('eakf_tab_mod::eakf_init', 'Unable to allocate fields. (sgm.nc)', FATAL)
-    end if
-    call mpp_get_fields(unit, fields)
-
-    do i=1, nvar
-       select case ( mpp_get_field_name(fields(i)) )
-       case ('SGM_E')
-          call mpp_read(unit, fields(i), sgm_e)
-       case ('SGM_TX')
-          call mpp_read(unit, fields(i), sgm_tx)
-       case ('SGM_TY')
-          call mpp_read(unit, fields(i), sgm_ty)
-       case ('SGM_T')
-          call mpp_read(unit, fields(i), sgm_t)
-       case ('SGM_S')
-          call mpp_read(unit, fields(i), sgm_s)
-       case ('SGM_U')
-          call mpp_read(unit, fields(i), sgm_u)
-       case ('SGM_V')
-          call mpp_read(unit, fields(i), sgm_v)
-       end select
-    end do
-    deallocate(fields)
-    deallocate(axes)
-    call mpp_close(unit)
+    call read_data(fileobj, "SGM_E", sgm_e)
+    call read_data(fileobj, "SGM_TX", sgm_tx)
+    call read_data(fileobj, "SGM_TY", sgm_ty)
+    call read_data(fileobj, "SGM_T", sgm_t)
+    call read_data(fileobj, "SGM_S", sgm_s)
+    call read_data(fileobj, "SGM_U", sgm_u)
+    call read_data(fileobj, "SGM_v", sgm_v)
+    call close_file(fileobj)
     ! finish sgm read
 
     cor_fname ='STA_COV/cor.nc'
-    call mpp_open(unit, trim(cor_fname), MPP_RDONLY,&
-         & MPP_NETCDF, threading=MPP_MULTI, fileset=MPP_SINGLE)
-    call mpp_get_info(unit, ndim, nvar, natt, ntime)
-    allocate(axes(ndim), STAT=istat)
-    if ( istat .ne. 0 ) then
-       call error_mesg('eakf_tab::eakf_init', 'Unable to allocate axes. (cor.nc)', FATAL)
-    end if
-    call mpp_get_axes(unit, axes)
-    do i=1, ndim
-       call mpp_get_atts(axes(i), name=axisname)
-       select case (trim(axisname))
-       case ('XT_OCEAN')
-          call mpp_get_atts(axes(i), len=nlon)
-       case ('YT_OCEAN')
-          call mpp_get_atts(axes(i), len=nlat)
-       case ('ZT_OCEAN')
-          call mpp_get_atts(axes(i), len=nlev)
-       end select
-    end do
+    if ( open_file(fileobj, trim(cor_fname), "read", is_restart = .false.)) then 
+       ndim= get_num_dimensions(fileobj)
+       nvar= get_num_variables(fileobj)
+       call get_dimension_size(fileobj,"XT_OCEAN",nlon)
+       call get_dimension_size(fileobj,"YT_OCEAN",nlat)
+       call get_dimension_size(fileobj,"ZT_OCEAN",nlev)
+    endif
 
     if ( nlon /= 360 .or. nlat /= 200 .or. nlev /= 50 ) then
        write (emsg_local, '("nlon(",I4,") .ne. 360 or  nlat(",I4,") .ne. 200 or nlev(",I4,") .ne 50")' ) nlon, nlat, nlev
@@ -261,31 +214,13 @@ contains
        call error_mesg('eakf_tab_mod::eakf_init', 'Unable to allocate cor_ev.', FATAL)
     end if
 
-    allocate(fields(nvar), STAT=istat)
-    if ( istat .ne. 0 ) then
-       call error_mesg('eakf_tab_mod::eakf_init', 'Unable to allocate fields. (cor.nc)', FATAL)
-    end if
-    call mpp_get_fields(unit, fields)
-
-    do i=1, nvar
-       select case ( mpp_get_field_name(fields(i)) )
-       case ('COR_SSH_TX')
-          call mpp_read(unit, fields(i), cor_etx)
-       case ('COR_SSH_TY')
-          call mpp_read(unit, fields(i), cor_ety)
-       case ('COR_SSH_T')
-          call mpp_read(unit, fields(i), cor_et)
-       case ('COR_SSH_S')
-          call mpp_read(unit, fields(i), cor_es)
-       case ('COR_SSH_U')
-          call mpp_read(unit, fields(i), cor_eu)
-       case ('COR_SSH_V')
-          call mpp_read(unit, fields(i), cor_ev)
-       end select
-    end do
-    deallocate(fields)
-    deallocate(axes)
-    call mpp_close(unit)
+    call read_data(fileobj, "COR_SSH_TX", cor_etx)
+    call read_data(fileobj, "COR_SSH_TY", cor_ety)
+    call read_data(fileobj, "COR_SSH_T",  cor_et)
+    call read_data(fileobj, "COR_SSH_S",  cor_es)
+    call read_data(fileobj, "COR_SSH_U",  cor_eu)
+    call read_data(fileobj, "COR_SSH_V",  cor_ev)
+    call close_file(fileobj)
     ! finish cor read
 
     do j=1, 200
@@ -349,46 +284,20 @@ contains
           do j0=1, j00
              ! Append to filename
              write (cor_sta_fname, '(A16,I2.2,A1,I2.2,A3)') cor_sta_fname, j0, 'D', k0, '.nc'
-             call mpp_open(unit, trim(cor_sta_fname), MPP_RDONLY,&
-                  & MPP_NETCDF, threading=MPP_MULTI, fileset=MPP_SINGLE)
-             call mpp_get_info(unit, ndim, nvar, natt, ntime)
-             allocate(axes(ndim), STAT=istat)
-             if ( istat .ne. 0 ) then
-                call error_mesg('eakf_tab::eakf_init', 'Unable to allocate axes. ('//trim(cor_sta_fname)//')', FATAL)
-             end if
-             call mpp_get_axes(unit, axes)
-             do i=1, ndim
-                call mpp_get_atts(axes(i), name=axisname)
-                ! Each file's dimension names have different extra characters
-                ! Keep only the first 8 to determine the dimension lengths.
-                axisname = axisname(1:8)
-                select case ( trim(axisname) )
-                case ('XT_OCEAN')
-                   call mpp_get_atts(axes(i), len=nlon)
-                case ('YT_OCEAN')
-                   call mpp_get_atts(axes(i), len=nlat)
-                case ('ZT_OCEAN')
-                   call mpp_get_atts(axes(i), len=nlev)
-                end select
-             end do
 
+             if ( open_file(fileobj, trim(cor_sta_fname), "read", is_restart = .false.)) then 
+                ndim= get_num_dimensions(fileobj)
+                nvar= get_num_variables(fileobj)
+                call get_dimension_size(fileobj,"XT_OCEAN",nlon)
+                call get_dimension_size(fileobj,"YT_OCEAN",nlat)
+                call get_dimension_size(fileobj,"ZT_OCEAN",nlev)
+             endif
              if ( nlon /= 41 .or. nlat /= 41 .or. nlev /= 11 ) then
                 write (emsg_local, '("nlon(",I4,") .ne. 41 or  nlat(",I4,") .ne. 41 or nlev(",I4,") .ne. 11")' ) nlon, nlat, nlev
                 call error_mesg('eakf_tab_mod::eakf_init', trim(emsg_local), FATAL)
              end if
 
-             allocate(fields(nvar), STAT=istat)
-             if ( istat .ne. 0 ) then
-                call error_mesg('eakf_tab_mod::eakf_init', 'Unable to allocate fields. ('//trim(cor_sta_fname)//')', FATAL)
-             end if
-             call mpp_get_fields(unit, fields)
-
-             do i=1, nvar
-                select case ( mpp_get_field_name(fields(i)) )
-                case ('COR')
-                   call mpp_read(unit, fields(i), cor)
-                end select
-             end do
+             call read_data(fileobj, "COR", cor)
 
              if ( l0 <= 4 ) then
                 l = (l0-1)*blk_j0 + (k0-1)*j00 + j0
@@ -405,9 +314,7 @@ contains
                 end do
              end do
 
-             deallocate(fields)
-             deallocate(axes)
-             call mpp_close(unit)
+             call close_file(fileobj)
 
           end do
        end do

@@ -21,7 +21,7 @@ module eakf_oda_mod
   ! ODA Modules
   use ocean_da_types_mod, only : ocean_profile_type, TEMP_ID, SALT_ID, missing_value
   use ocean_da_types_mod, only : ODA_PFL, ODA_XBT, ODA_MRB, ODA_OISST
-  use ocean_da_types_mod, only : ocean_control_struct, grid_type
+  use ocean_da_types_mod, only : ensemble_control_struct, grid_type
   use kdtree, only : kd_root, kd_search_radius, kd_init
 
   ! EAKF modules
@@ -68,8 +68,8 @@ module eakf_oda_mod
 contains
 
   subroutine ensemble_filter(Prior, Posterior, Profiles, kdroot, Domain, oda_grid)
-    type(ocean_control_struct), pointer, intent(in) :: Prior
-    type(ocean_control_struct), pointer, intent(inout) :: Posterior
+    type(ensemble_control_struct), pointer, intent(in) :: Prior
+    type(ensemble_control_struct), pointer, intent(inout) :: Posterior
     type(ocean_profile_type), pointer, intent(in) :: Profiles
     type(kd_root), pointer, intent(inout) :: kdroot
     type(domain2d), pointer :: Domain

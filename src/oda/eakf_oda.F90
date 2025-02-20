@@ -45,6 +45,10 @@ module eakf_oda_mod
   integer, allocatable, dimension(:) :: dist_seq
   real, allocatable, dimension(:) :: kd_dist
   real, allocatable, dimension(:) :: dist_sorted
+  real :: TEMP_MAX_LIMIT = 39.0
+  real :: TEMP_MIN_LIMIT = -4.0
+  real :: SALT_MAX_LIMIT = 40.0
+  real :: SALT_MIN_LIMIT = 5.0
 
   !---- namelist with default values
   real :: e_flder_oer = 2000.0
@@ -58,7 +62,7 @@ module eakf_oda_mod
   real :: obs_ice_limit = -2.0
   real :: temp_limit = 5.0
   real :: salt_limit = 2.0
-
+  real :: shelf_depth = 100.0
   namelist /eakf_nml/ e_flder_oer, depth_eq, lat_eq, debug_eakf, outlier_qc, &
             get_obs_forecast, get_obs_analysis, sst_ice_limit, obs_ice_limit, &
             temp_limit, salt_limit
@@ -101,6 +105,7 @@ contains
 
     logical :: assim_flag, interp_flag
     integer :: model_basin
+    real :: bathyT
     type(loc_type) :: model_loc, obs_loc
 
     integer :: ii_ens, jj_ens, kk_ens
@@ -312,6 +317,7 @@ contains
 
                 model_loc%lon = oda_grid%x(ii_ens, jj_ens)
                 model_loc%lat = oda_grid%y(ii_ens, jj_ens)
+                bathyT = oda_grid%bathyT(ii_ens, jj_ens)
 
                 assim_flag = .false.
           
@@ -330,6 +336,8 @@ contains
                 elseif(Prof%basin_mask .eq. 6) then ! Mediterranean
                    if(model_basin == 6) assim_flag = .true.
                 end if
+
+                if(bathyT < shelf_depth) assim_flag = .false.
 
                 ifblock_6: if ( assim_flag ) then ! (6)
                    dist = kd_dist(dist_seq(k))
@@ -390,8 +398,9 @@ contains
                    end if
 
                    prof_count=prof_count+1
-                   if (obs_dist>outlier_limit) outlier_count=outlier_count+1
+                  !  if (obs_dist>outlier_limit) outlier_count=outlier_count+1
                    if (outlier_qc .and. obs_dist>outlier_limit) then
+                     outlier_count=outlier_count+1
                       !print *,"outlier obs, var ratio=",obs_dist
                    else
                       doloop_3: do kk_ens=kk1, kk2 ! (3)
@@ -417,15 +426,15 @@ contains
 
                                ! limit the unreasonable values if applicable
                                doloop_0: do j_ens=1, ens_size ! (0)
-                                  if ( ens(t_tau, j_ens) > 39.0 ) then
+                                  if ( ens(t_tau, j_ens) > TEMP_MAX_LIMIT ) then
                                      write (UNIT=stdout_unit, FMT='("T(",3I5,") = ",F15.8)')&
                                           & ii_ens, jj_ens, kk_ens, ens(t_tau,j_ens)
-                                     ens(t_tau, j_ens) = 39.0
+                                     ens(t_tau, j_ens) = TEMP_MAX_LIMIT
                                   end if
-                                  if ( ens(t_tau, j_ens) < -4.0 ) then
+                                  if ( ens(t_tau, j_ens) < TEMP_MIN_LIMIT ) then
                                      write (UNIT=stdout_unit, FMT='("T(",3I5,") = ",F25.8)')&
                                           & ii_ens, jj_ens, kk_ens, ens(t_tau,j_ens)
-                                     ens(t_tau, j_ens) = -4.0
+                                     ens(t_tau, j_ens) = TEMP_MIN_LIMIT
                                   end if
                                end do doloop_0 ! handle the extremeties (0)
 
@@ -438,16 +447,16 @@ contains
 
                                   ! limit the unreasonable values if applicable
                                   doloop_00: do j_ens = 1, ens_size ! (0)
-                                     if ( ens(s_tau, j_ens) > 44.0 ) then
+                                     if ( ens(s_tau, j_ens) > SALT_MAX_LIMIT ) then
                                         write (UNIT=stdout_unit, FMT='("S(",3I5,") = ",F15.8)') &
                                              & ii_ens, jj_ens, kk_ens, ens(s_tau,j_ens)
-                                        ens(s_tau, j_ens) = 44.0
+                                        ens(s_tau, j_ens) = SALT_MAX_LIMIT
                                      end if
 
-                                     if ( ens(s_tau, j_ens) < 0.0 ) then
+                                     if ( ens(s_tau, j_ens) < SALT_MIN_LIMIT ) then
                                         write (UNIT=stdout_unit, FMT='("S(",3I5,") = ",F15.8)')&
                                              & ii_ens, jj_ens, kk_ens, ens(s_tau,j_ens)
-                                        ens(s_tau, j_ens) = 0.0
+                                        ens(s_tau, j_ens) = SALT_MIN_LIMIT
                                      end if
                                   end do doloop_00 ! handle the extremeties (0)
                                end if ifblock_0_50 ! impact salinity or not (0.5)
@@ -460,15 +469,15 @@ contains
 
                                ! limit the unreasonable values if applicable
                                do j_ens = 1, ens_size ! (0)
-                                  if ( ens(s_tau, j_ens) > 44.0 ) then
+                                  if ( ens(s_tau, j_ens) > SALT_MAX_LIMIT ) then
                                      write (UNIT=stdout_unit, FMT='("S(",3I5,") = ",F15.8)')&
                                           & ii_ens, jj_ens, kk_ens, ens(s_tau,j_ens)
-                                     ens(s_tau, j_ens) = 44.0
+                                     ens(s_tau, j_ens) = SALT_MAX_LIMIT
                                   end if
-                                  if ( ens(s_tau, j_ens) < 0.0 ) then
+                                  if ( ens(s_tau, j_ens) < SALT_MIN_LIMIT ) then
                                      write (UNIT=stdout_unit, FMT='("S(",3I5,") = ",F15.8)')&
                                           & ii_ens, jj_ens, kk_ens, ens(s_tau,j_ens)
-                                     ens(s_tau, j_ens) = 0.0
+                                     ens(s_tau, j_ens) = SALT_MIN_LIMIT
                                   end if
                                end do ! handle the extremeties (0)
 
@@ -481,15 +490,15 @@ contains
 
                                   ! limit the unreasonable values if applicable
                                   do j_ens = 1, ens_size ! (0)
-                                     if ( ens(t_tau, j_ens) > 39.0 ) then
+                                     if ( ens(t_tau, j_ens) > TEMP_MAX_LIMIT ) then
                                         write (UNIT=stdout_unit, FMT='("T(",3I5,") = ",F15.8)')&
                                              & ii_ens, jj_ens, kk_ens, ens(t_tau,j_ens)
-                                        ens(t_tau, j_ens) = 39.0
+                                        ens(t_tau, j_ens) = TEMP_MAX_LIMIT
                                      end if
-                                     if(ens(t_tau, j_ens) < -4.0) then
+                                     if(ens(t_tau, j_ens) < TEMP_MIN_LIMIT ) then
                                         write (UNIT=stdout_unit, FMT='("T(",3I5,") = ",F15.8)')&
                                              & ii_ens, jj_ens, kk_ens, ens(t_tau,j_ens)
-                                        ens(t_tau, j_ens) = -4.0
+                                        ens(t_tau, j_ens) = TEMP_MIN_LIMIT
                                      end if
                                   end do ! handle the extremeties (0)
                                end if ifblock_0_5 ! impact temperature or not (0.5)

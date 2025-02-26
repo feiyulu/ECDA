@@ -65,7 +65,7 @@ module eakf_oda_mod
   real :: shelf_depth = 100.0
   namelist /eakf_nml/ e_flder_oer, depth_eq, lat_eq, debug_eakf, outlier_qc, &
             get_obs_forecast, get_obs_analysis, sst_ice_limit, obs_ice_limit, &
-            temp_limit, salt_limit
+            temp_limit, salt_limit, shelf_depth
 
   public ensemble_filter
 

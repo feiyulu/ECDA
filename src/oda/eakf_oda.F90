@@ -20,7 +20,7 @@ module eakf_oda_mod
 
   ! ODA Modules
   use ocean_da_types_mod, only : ocean_profile_type, TEMP_ID, SALT_ID, missing_value
-  use ocean_da_types_mod, only : ODA_PFL, ODA_XBT, ODA_MRB, ODA_OISST
+  use ocean_da_types_mod, only : ODA_PFL, ODA_XBT, ODA_MRB, ODA_OISST, ODA_SSS
   use ocean_da_types_mod, only : ensemble_control_struct, grid_type
   use kdtree, only : kd_root, kd_search_radius, kd_init
 
@@ -336,6 +336,12 @@ contains
                 elseif(Prof%basin_mask .eq. 6) then ! Mediterranean
                    if(model_basin == 6) assim_flag = .true.
                 end if
+
+                if(Prof%inst_type == ODA_OISST .or. Prof%inst_type == ODA_SSS) then
+                  if(model_basin == Prof%basin_mask) then
+                     assim_flag = .true.
+                  endif
+                endif
 
                 if(bathyT < shelf_depth) assim_flag = .false.
 
@@ -666,6 +672,7 @@ contains
                 T_ensemble(i,j,k,m) = as(idx, m)
                 idx_s = blk_h*nk + idx
                 S_ensemble(i,j,k,m) = as(idx_s, m)
+                if (S_ensemble(i,j,k,m) > 60) S_ensemble(i,j,k,m) = 60
              end do
           end do
        end do

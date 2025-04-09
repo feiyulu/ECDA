@@ -107,7 +107,7 @@ contains
     integer :: model_basin
     real :: bathyT
     type(loc_type) :: model_loc, obs_loc
-
+    real :: impact_levels
     integer :: ii_ens, jj_ens, kk_ens
     integer :: ind_temp_h, ind_temp_l, ind_salt_h, ind_salt_l
     integer :: i, j, k, k0, kk, num, blk, i_idx, salt_offset
@@ -302,15 +302,9 @@ contains
              obs_sigma = Prof%obs_error*exp(-Prof%depth(kk)/e_flder_oer)
              obs_value = Prof%data(kk)
              obs_var = obs_sigma * obs_sigma
-             
              kk0 = FLOOR(Prof%k_index(kk))
-             kk1 = kk0 - 2 * Prof%impact_levels +1
-             kk2 = kk0 + 2 * Prof%impact_levels
-             if(Prof%inst_type .eq. ODA_PFL .and. kk.eq.k0 .AND. depth_bot.gt.1500.0) kk2 = nk
-             if(kk1 < 1) kk1 = 1
-             if(kk2 > nk) kk2 = nk
-
-             doloop_8: do k=1, kd_num ! (8)
+             
+             doloop_8: do k=1, kd_num ! (8)                
                 ii_ens = lon1d(kd_ind(dist_seq(k)))
                 jj_ens = lat1d(kd_ind(dist_seq(k)))
                 i_h = (jj_ens-jsd)*(ied-isd+1)+ii_ens-isd+1
@@ -318,6 +312,20 @@ contains
                 model_loc%lon = oda_grid%x(ii_ens, jj_ens)
                 model_loc%lat = oda_grid%y(ii_ens, jj_ens)
                 bathyT = oda_grid%bathyT(ii_ens, jj_ens)
+                
+                impact_levels = REAL(Prof%impact_levels)
+                if(Prof%inst_type .eq. ODA_OISST .and. impact_levels > 5.0) then
+                   impact_levels = Prior%MLD_index(ii_ens, jj_ens)
+                endif
+                if(Prof%inst_type .eq. ODA_SSS) then
+                   impact_levels = Prior%MLD_index(ii_ens, jj_ens)
+                endif
+
+                kk1 = kk0 - 2 * INT(impact_levels) +1
+                kk2 = kk0 + 2 * INT(impact_levels)
+                if(Prof%inst_type .eq. ODA_PFL .and. kk.eq.k0 .AND. depth_bot.gt.1500.0) kk2 = nk
+                if(kk1 < 1) kk1 = 1
+                if(kk2 > nk) kk2 = nk
 
                 assim_flag = .false.
           
@@ -417,7 +425,7 @@ contains
                          else
                            diff_k = REAL(kk_ens) - Prof%k_index(kk)
                          end if
-                         cov_factor_v = comp_cov_factor( diff_k, REAL(Prof%impact_levels) )
+                         cov_factor_v = comp_cov_factor( diff_k, impact_levels )
                          if(kk.eq.k0 .AND. depth_bot.gt.1500.0 .AND. kk_ens.gt.kk0) cov_factor_v  = 1.0
                          cov_factor=abs(cov_factor_v*cov_factor_t*cov_factor_h)
 

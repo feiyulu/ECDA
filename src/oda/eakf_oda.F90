@@ -58,8 +58,8 @@ module eakf_oda_mod
   logical :: outlier_qc = .true.
   logical :: get_obs_forecast = .true.
   logical :: get_obs_analysis = .false.
-  real :: sst_ice_limit = -2.0
-  real :: obs_ice_limit = -2.0
+  real :: sst_ice_limit = -1.75
+  real :: obs_ice_limit = -1.75
   real :: temp_limit = 5.0
   real :: salt_limit = 2.0
   real :: shelf_depth = 100.0
@@ -217,14 +217,14 @@ contains
        Prof => Profiles
        do while (associated(Prof))
           k0 = Prof%levels
-          if(.not. associated(Prof%forecast)) allocate(Prof%forecast(k0))
+         !  if(.not. associated(Prof%forecast)) allocate(Prof%forecast(k0))
           do kk = 1, k0
-             Prof%forecast(kk) = missing_value
+            !  Prof%forecast(kk) = missing_value
              depth_kk = Prof%depth(kk)
              interp_flag = .true.
              v2_h = 0.0
              v2_l = 0.0
-             if ( Prof%variable == TEMP_ID ) then
+             if ( Prof%variable == SALT_ID .or.  Prof%variable == TEMP_ID ) then
                 do i_idx=1, 4
                    ind_temp_h = Prof%obs_def(kk)%state_var_index(i_idx)
                    ind_temp_l = Prof%obs_def(kk)%state_var_index(i_idx+4)
@@ -251,14 +251,18 @@ contains
                 forecast_s = v2_h*Prof%obs_def(kk)%coef(5) + v2_l*Prof%obs_def(kk)%coef(6)
              end if
              if(interp_flag) then
+                forecast_t = gsw_pt_from_t(forecast_s,forecast_t,0.0,depth_kk)
                 if ( Prof%variable == TEMP_ID ) then
-                   Prof%forecast(kk) = gsw_pt_from_t(forecast_s,forecast_t,0.0,depth_kk)
+                  !  Prof%forecast(kk) = gsw_pt_from_t(forecast_s,forecast_t,0.0,depth_kk)
                    if (Prof%inst_type == ODA_OISST) then
-                      if ( Prof%forecast(kk) < sst_ice_limit) Prof%flag(kk) = .false.
+                      if ( forecast_t < sst_ice_limit) Prof%flag(kk) = .false.
                       if ( Prof%data(kk) < obs_ice_limit) Prof%flag(kk) = .false.
                    endif
                 elseif ( Prof%variable == SALT_ID ) then
-                   Prof%forecast(kk) = forecast_s
+                  !  Prof%forecast(kk) = forecast_s
+                   if (Prof%inst_type == ODA_SSS) then
+                      if ( forecast_t < sst_ice_limit) Prof%flag(kk) = .false.
+                   endif
                 end if
              else
                 Prof%flag(kk) = .false.
@@ -306,6 +310,7 @@ contains
              kk0 = FLOOR(Prof%k_index(kk))
              kk1 = kk0 - 2 * Prof%impact_levels +1
              kk2 = kk0 + 2 * Prof%impact_levels
+             if(Prof%inst_type == ODA_OISST .or. Prof%inst_type == ODA_SSS) kk2 = kk2 + 6
              if(Prof%inst_type .eq. ODA_PFL .and. kk.eq.k0 .AND. depth_bot.gt.1500.0) kk2 = nk
              if(kk1 < 1) kk1 = 1
              if(kk2 > nk) kk2 = nk
@@ -337,10 +342,12 @@ contains
                    if(model_basin == 6) assim_flag = .true.
                 end if
 
-                if(Prof%inst_type == ODA_OISST .or. Prof%inst_type == ODA_SSS) then
-                  if(model_basin == Prof%basin_mask) then
-                     assim_flag = .true.
-                  endif
+                if(Prof%inst_type == ODA_OISST) then
+                  if(model_basin == Prof%basin_mask) assim_flag = .true.
+                endif
+
+                if(Prof%inst_type == ODA_SSS) then
+                  if(model_basin == Prof%basin_mask) assim_flag = .true.
                 endif
 
                 if(bathyT < shelf_depth) assim_flag = .false.
@@ -417,7 +424,17 @@ contains
                          else
                            diff_k = REAL(kk_ens) - Prof%k_index(kk)
                          end if
-                         cov_factor_v = comp_cov_factor( diff_k, REAL(Prof%impact_levels) )
+                         
+                         if(Prof%inst_type == ODA_OISST .or. Prof%inst_type == ODA_SSS) then
+                           if (diff_k <= 2*REAL(Prof%impact_levels)) then
+                              cov_factor_v = 1.0
+                           else
+                              cov_factor_v = comp_cov_factor( diff_k-2*REAL(Prof%impact_levels), 3.0 )
+                           end if
+                         else
+                           cov_factor_v = comp_cov_factor( diff_k, REAL(Prof%impact_levels) )
+                         end if
+
                          if(kk.eq.k0 .AND. depth_bot.gt.1500.0 .AND. kk_ens.gt.kk0) cov_factor_v  = 1.0
                          cov_factor=abs(cov_factor_v*cov_factor_t*cov_factor_h)
 

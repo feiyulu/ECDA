@@ -58,8 +58,8 @@ module eakf_oda_mod
   logical :: outlier_qc = .true.
   logical :: get_obs_forecast = .true.
   logical :: get_obs_analysis = .false.
-  real :: sst_ice_limit = -1.75
-  real :: obs_ice_limit = -1.75
+  real :: sst_ice_limit = -1.79
+  real :: obs_ice_limit = -1.79
   real :: temp_limit = 5.0
   real :: salt_limit = 2.0
   real :: shelf_depth = 100.0
@@ -119,7 +119,7 @@ contains
     real :: diff_hours, diff_k, window_hours
 
     !---------------------------------------------------------------------------
-    real :: forecast_t, forecast_s, analysis_t, analysis_s
+    real :: forecast_t, forecast_pt, forecast_s, analysis_t, analysis_s
     real :: obs_value, obs_sigma, obs_var, ensmean_salt
     real :: dist, dist0
     real :: v2_h, v2_l
@@ -251,17 +251,17 @@ contains
                 forecast_s = v2_h*Prof%obs_def(kk)%coef(5) + v2_l*Prof%obs_def(kk)%coef(6)
              end if
              if(interp_flag) then
-                forecast_t = gsw_pt_from_t(forecast_s,forecast_t,0.0,depth_kk)
+                forecast_pt = gsw_pt_from_t(forecast_s,forecast_t,0.0,depth_kk)
                 if ( Prof%variable == TEMP_ID ) then
                   !  Prof%forecast(kk) = gsw_pt_from_t(forecast_s,forecast_t,0.0,depth_kk)
                    if (Prof%inst_type == ODA_OISST) then
-                      if ( forecast_t < sst_ice_limit) Prof%flag(kk) = .false.
+                      if ( forecast_pt < sst_ice_limit) Prof%flag(kk) = .false.
                       if ( Prof%data(kk) < obs_ice_limit) Prof%flag(kk) = .false.
                    endif
                 elseif ( Prof%variable == SALT_ID ) then
                   !  Prof%forecast(kk) = forecast_s
                    if (Prof%inst_type == ODA_SSS) then
-                      if ( forecast_t < sst_ice_limit) Prof%flag(kk) = .false.
+                      if ( forecast_pt < sst_ice_limit) Prof%flag(kk) = .false.
                    endif
                 end if
              else
